@@ -75,6 +75,23 @@ fn newer(a: &str, b: &str) -> bool {
 mod tests {
     use super::newer;
 
+    // Talks to GitHub; run with `cargo test -- --ignored updater`.
+    #[test]
+    #[ignore]
+    fn updater_live_release() {
+        assert!(super::check().unwrap().is_none(), "this build should be the latest release");
+        // install the published binary over a scratch file, through the real download and checks
+        let url = format!("https://github.com/{}/releases/latest/download/{}", super::REPO, super::ASSET);
+        let dir = std::env::temp_dir().join(format!("sonavelt-update-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("sonavelt");
+        std::fs::write(&exe, b"old").unwrap();
+        super::install(&super::Release { version: "test".into(), url }, &exe).unwrap();
+        let new = std::fs::read(&exe).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(new.starts_with(b"\x7fELF") && new.len() > 1 << 20);
+    }
+
     #[test]
     fn version_ordering() {
         assert!(newer("0.2.0", "0.1.0"));

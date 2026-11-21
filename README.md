@@ -98,6 +98,9 @@ cd sonavelt-*-x86_64-linux
 ./sonavelt
 ```
 
+The prebuilt binary needs glibc 2.44 or newer, which current rolling distros (Arch, Tumbleweed,
+Fedora 43+) have. On older systems such as Ubuntu 24.04, build from source instead (below).
+
 On first launch Sonavelt adds itself to your app launcher, with its icon. Put the folder somewhere
 you can write to (for example `~/.local/opt/sonavelt`), so in-app updates can replace the binary.
 
