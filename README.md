@@ -8,6 +8,7 @@
 YouTube, internet radio and your own files, in one fast native app written in Rust.
 
 [![Release](https://img.shields.io/github/v/release/Agapenordev/sonavelt?color=b0264a)](https://github.com/Agapenordev/sonavelt/releases/latest)
+[![CI](https://github.com/Agapenordev/sonavelt/actions/workflows/ci.yml/badge.svg)](https://github.com/Agapenordev/sonavelt/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-f8ead6)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Linux-5c0f2a)
 ![Rust](https://img.shields.io/badge/made%20with-Rust-b0264a)
@@ -144,6 +145,18 @@ You need a recent stable Rust toolchain and the ALSA development headers
 |---|---|
 | Library, playlists, settings | `~/.config/sonavelt/library.json` |
 | YouTube downloads, artwork cache | `~/.cache/sonavelt/` (clear downloads from Settings) |
+
+## Roadmap
+
+Next up: media keys and desktop integration (MPRIS), real tags for local files, the current
+song on radio stations, and builds for older distros. The full list is in [ROADMAP.md](ROADMAP.md).
+
+## Contributing
+
+Bug reports, ideas and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers
+setup, the checks every PR runs, and how to open a pull request. Using an AI coding agent? Point
+it at [AGENTS.md](AGENTS.md), which explains the architecture and the rules that keep the
+codebase and design consistent.
 
 ## Credits
 

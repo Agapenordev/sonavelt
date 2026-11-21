@@ -1,0 +1,54 @@
+name: Bug report
+description: Something doesn't work as it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Radio
+        2. Pick "jazz"
+        3. Click the first station
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Where does it happen
+      multiple: true
+      options: [YouTube, Radio, Local files, Lyrics, Playlists or queue, Tray, Settings, Updates, Everywhere]
+  - type: input
+    id: version
+    attributes:
+      label: Sonavelt version
+      description: Shown in Settings > Updates.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Distro and desktop
+      placeholder: "Arch, KDE Plasma 6 (Wayland)"
+    validations:
+      required: true
+  - type: textarea
+    id: tools
+    attributes:
+      label: Tool versions
+      description: Output of `yt-dlp --version` and `ffmpeg -version | head -1`. Most YouTube problems are an outdated yt-dlp.
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Terminal output
+      description: Run `sonavelt` from a terminal, reproduce the problem, and paste what it printed.
+      render: text

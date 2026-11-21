@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Contributing guide
+    url: https://github.com/Agapenordev/sonavelt/blob/main/CONTRIBUTING.md
+    about: How to set up, make a change and open a pull request
