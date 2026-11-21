@@ -15,6 +15,11 @@ one matters to you, open an issue or add a thumbs-up to an existing one. Want to
 - System tray, close to tray, sleep timer, keyboard shortcuts
 - In-app updates from GitHub releases
 
+## Shipped in 0.1.1
+
+- Automatic releases from CI, built against glibc 2.35 so downloads run on Ubuntu 22.04, Debian 12,
+  Fedora 36 and newer
+
 ## Next
 
 - **Media keys and desktop integration (MPRIS).** Play, pause and skip from keyboard media keys,
@@ -23,8 +28,6 @@ one matters to you, open an issue or add a thumbs-up to an existing one. Want to
   from `Artist - Title` filenames.
 - **What's playing on the radio.** Show the current song from the station's stream metadata, and
   let you heart it or search it on YouTube.
-- **Prebuilt binaries for older distros.** Build releases in CI on an older glibc, so the download
-  runs on Ubuntu 24.04 and similar.
 - **Packages.** AUR, Flatpak, and a `.deb`/`.rpm`.
 
 ## Later
