@@ -212,11 +212,11 @@ pub fn curated_radios() -> Vec<Track> {
         ("Radio Paradise", "eclectic rock & more", "https://stream.radioparadise.com/mp3-192", "https://radioparadise.com/apple-touch-icon.png"),
         ("FIP", "Radio France · jazz/world/everything", "https://icecast.radiofrance.fr/fip-midfi.mp3", "https://www.fip.fr/dist/favicons/logo-120.png"),
         ("FIP Groove", "Radio France · funk & soul", "https://icecast.radiofrance.fr/fipgroove-midfi.mp3", "https://www.fip.fr/dist/favicons/logo-120.png"),
-        ("KEXP 90.3", "Seattle · indie", "https://kexp-mp3-128.streamguys1.com/kexp128.mp3", "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/KEXP_logo_%28black_on_orange%29.svg/512px-KEXP_logo_%28black_on_orange%29.svg.png"),
+        ("KEXP 90.3", "Seattle · indie", "https://kexp-mp3-128.streamguys1.com/kexp128.mp3", "https://www.kexp.org/apple-touch-icon.png"),
         ("NTS 1", "London · underground", "https://stream-relay-geo.ntslive.net/stream", "https://www.nts.live/apple-touch-icon.png"),
         ("Nightride FM", "synthwave", "https://stream.nightride.fm/nightride.mp3", "https://nightride.fm/thumbnail.png"),
         ("Chillsynth", "chill synthwave", "https://stream.nightride.fm/chillsynth.mp3", "https://nightride.fm/thumbnail.png"),
-        ("Jazz24", "straight-ahead jazz", "https://live.wostreaming.net/direct/ppm-jazz24mp3-ibc1", "https://npr.brightspotcdn.com/dims4/default/032ce25/2147483647/strip/true/crop/900x900+0+0/resize/600x600!/format/webp/quality/90/?url=http%3A%2F%2Fnpr-brightspot.s3.amazonaws.com%2F98%2Ff7%2F48229ba341b0b1c8933834130d10%2Fjazz24.jpg"),
+        ("Jazz24", "straight-ahead jazz", "https://live.wostreaming.net/direct/ppm-jazz24mp3-ibc1", "https://www.jazz24.org/apple-touch-icon.png"),
         ("BBC Radio 1", "UK · pop & dance", "http://as-hls-ww-live.akamaized.net/pool_904/live/ww/bbc_radio_one/bbc_radio_one.isml/bbc_radio_one-audio%3d96000.norewind.m3u8", "https://cdn-radiotime-logos.tunein.com/s24939q.png"),
     ]
     .into_iter()

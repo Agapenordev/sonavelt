@@ -5,6 +5,7 @@ mod logo;
 mod sources;
 mod theme;
 mod tray;
+mod updater;
 mod viz;
 
 use art::ArtCache;
@@ -74,6 +75,8 @@ enum Msg {
     Resolved(u64, Result<String, String>),
     Lyrics(String, Result<Lyrics, String>),
     Recs(Vec<Track>),
+    UpdateChecked(bool, Result<Option<updater::Release>, String>),
+    UpdateInstalled(Result<String, String>),
 }
 
 #[derive(Clone, PartialEq)]
@@ -87,6 +90,16 @@ enum View {
     Queue,
     Playlist(String),
     Settings,
+}
+
+enum Update {
+    Idle,
+    Checking,
+    UpToDate,
+    Available(updater::Release),
+    Installing(String),
+    Ready(String),
+    Failed(String),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -149,6 +162,10 @@ struct App {
     picker: Option<String>,
     pick_query: String,
     cache_size: Option<u64>,
+    update: Update,
+    /// Our own path, read at startup: after an update swaps the file, the running process's
+    /// link to itself points at the deleted original.
+    exe: std::path::PathBuf,
 }
 
 impl App {
@@ -157,11 +174,11 @@ impl App {
         style(&ctx);
         let (tx, rx) = channel();
         let mut lib = Library::load();
-        // history saved before stations carried logos: borrow them from the curated list
+        // saved stations keep the logo they had when saved; curated ones get today's link
         let curated = sources::curated_radios();
         for t in [&mut lib.favorites, &mut lib.recent].into_iter().chain(lib.playlists.values_mut()).flatten() {
-            if t.art.is_none() {
-                t.art = curated.iter().find(|c| c.source == t.source).and_then(|c| c.art.clone());
+            if let Some(c) = curated.iter().find(|c| c.source == t.source) {
+                t.art = c.art.clone();
             }
         }
         let engine = audio::Engine::new();
@@ -181,6 +198,8 @@ impl App {
             picker: None,
             pick_query: String::new(),
             cache_size: None,
+            update: Update::Idle,
+            exe: updater::current_exe(),
             art: ArtCache::new(&ctx),
             ctx,
             engine,
@@ -217,6 +236,7 @@ impl App {
             lib,
         };
         app.scan();
+        app.check_update(true);
         // resume where you left off: last song loaded, paused
         if let Some(t) = app.lib.recent.first().cloned() {
             app.queue = vec![t.clone()];
@@ -529,6 +549,25 @@ impl App {
                     self.busy.remove("lyrics");
                     self.lyrics.insert(k, r);
                 }
+                Msg::UpdateChecked(quiet, r) => {
+                    self.busy.remove("update");
+                    self.update = match r {
+                        Ok(Some(rel)) => {
+                            self.toast(format!("Sonavelt {} is available. Update it from Settings", rel.version));
+                            Update::Available(rel)
+                        }
+                        Ok(None) => Update::UpToDate,
+                        Err(_) if quiet => Update::Idle, // offline at launch: say nothing
+                        Err(e) => Update::Failed(e),
+                    };
+                }
+                Msg::UpdateInstalled(r) => {
+                    self.busy.remove("update");
+                    self.update = match r {
+                        Ok(v) => Update::Ready(v),
+                        Err(e) => Update::Failed(e),
+                    };
+                }
                 Msg::Recs(v) => {
                     self.busy.remove("recs");
                     let mut at = self.qpos + 2;
@@ -664,7 +703,8 @@ impl App {
             }
         });
         ui.with_layout(egui::Layout::bottom_up(Align::Min), |ui| {
-            if nav_item(ui, icon::GEAR_SIX, "Settings", None, self.view == View::Settings, None) {
+            let dot = matches!(self.update, Update::Available(_) | Update::Ready(_)).then_some(self.aura.accent);
+            if nav_item(ui, icon::GEAR_SIX, "Settings", None, self.view == View::Settings, dot) {
                 self.set_view(View::Settings);
             }
             ui.add_space(8.0);
@@ -1643,6 +1683,30 @@ impl App {
         }
     }
 
+    fn check_update(&mut self, quiet: bool) {
+        self.update = Update::Checking;
+        self.spawn("update", move || Msg::UpdateChecked(quiet, updater::check()));
+    }
+
+    fn install_update(&mut self) {
+        let Update::Available(rel) = &self.update else { return };
+        let (rel, exe) = (rel.clone(), self.exe.clone());
+        self.update = Update::Installing(rel.version.clone());
+        self.spawn("update", move || Msg::UpdateInstalled(updater::install(&rel, &exe).map(|_| rel.version)));
+    }
+
+    /// Start the freshly installed build, then quit this one.
+    fn restart(&mut self, ctx: &egui::Context) {
+        self.lib.save();
+        match std::process::Command::new(&self.exe).spawn() {
+            Ok(_) => {
+                self.quitting = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Err(e) => self.update = Update::Failed(format!("Couldn't restart: {e}")),
+        }
+    }
+
     fn tray_tick(&mut self) {
         while let Ok(cmd) = self.tray_rx.try_recv() {
             self.tray_cmd(cmd);
@@ -1814,6 +1878,45 @@ impl App {
                 self.lib.save();
                 self.scan();
                 self.toast("Rescanning your music folder");
+            }
+
+            group(ui, "Updates");
+            let accent = self.aura.accent;
+            let mut action = None;
+            let desc = match &self.update {
+                Update::Idle => format!("You're on {}", updater::VERSION),
+                Update::Checking => "Checking GitHub for a new release".into(),
+                Update::UpToDate => format!("{} is the latest version", updater::VERSION),
+                Update::Available(r) => format!("{} is out. You're on {}", r.version, updater::VERSION),
+                Update::Installing(v) => format!("Downloading {v}"),
+                Update::Ready(v) => format!("{v} is installed. Restart to start using it"),
+                Update::Failed(e) => e.clone(),
+            };
+            row(ui, "Sonavelt", &desc, |ui| match &self.update {
+                Update::Checking | Update::Installing(_) => {
+                    ui.spinner();
+                }
+                Update::Available(r) => {
+                    if pill(ui, &format!("{}  Update to {}", icon::DOWNLOAD_SIMPLE, r.version), accent, INK).clicked() {
+                        action = Some(1);
+                    }
+                }
+                Update::Ready(_) => {
+                    if pill(ui, &format!("{}  Restart now", icon::ARROW_CLOCKWISE), accent, INK).clicked() {
+                        action = Some(2);
+                    }
+                }
+                _ => {
+                    if ui.button("Check for updates").clicked() {
+                        action = Some(0);
+                    }
+                }
+            });
+            match action {
+                Some(0) => self.check_update(false),
+                Some(1) => self.install_update(),
+                Some(2) => self.restart(ui.ctx()),
+                _ => {}
             }
 
             group(ui, "Storage");

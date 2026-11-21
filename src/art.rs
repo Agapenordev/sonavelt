@@ -33,8 +33,8 @@ type Done = (String, Option<image::RgbaImage>);
 const THUMB: u32 = 256;
 const HI: u32 = 640;
 const MAX_TEXTURES: usize = 160;
-/// Bump to invalidate every cached image (v1 cached Google's logo for some stations).
-const ART_DIR: &str = "art-v2";
+/// Bump to invalidate every cached image (older versions cached wrong fallback logos).
+const ART_DIR: &str = "art-v3";
 
 pub struct ArtCache {
     map: HashMap<String, Slot>,
@@ -48,7 +48,9 @@ impl ArtCache {
         let (jobs, job_rx) = channel::<Job>();
         let (done_tx, done) = channel::<Done>();
         let job_rx = Arc::new(Mutex::new(job_rx));
-        let _ = std::fs::remove_dir_all(dirs::cache_dir().unwrap_or_default().join("sonavelt").join("art"));
+        for old in ["art", "art-v2"] {
+            let _ = std::fs::remove_dir_all(dirs::cache_dir().unwrap_or_default().join("sonavelt").join(old));
+        }
         // network-bound, so more workers than cores: one slow logo server can't stall the grid
         for _ in 0..12 {
             let (rx, tx, ctx) = (job_rx.clone(), done_tx.clone(), ctx.clone());
@@ -162,8 +164,9 @@ fn fetch(t: &Track, size: u32) -> Option<Vec<u8>> {
         Source::Radio(stream) => t.art.as_deref().and_then(get).or_else(|| {
             let page = t.art.as_deref().unwrap_or(stream);
             let host = page.split("://").nth(1)?.split(['/', ':', '?']).next()?;
-            // the icon service's own host would just give back Google's logo
-            (!host.contains("google.")).then(|| get(&format!("https://www.google.com/s2/favicons?domain={host}&sz=128")))?
+            // a shared image host's icon (Google, Wikimedia, a CDN) isn't the station's
+            const SHARED: &[&str] = &["google.", "gstatic.", "wikimedia.", "wikipedia.", "tunein.", "brightspotcdn.", "cloudfront.", "akamai", "imgur.", "githubusercontent.", "duckduckgo.", "bing."];
+            (!SHARED.iter().any(|s| host.contains(s))).then(|| get(&format!("https://www.google.com/s2/favicons?domain={host}&sz=128")))?
         }),
         Source::Local(p) => {
             let out = Command::new("ffmpeg").args(["-v", "error", "-i"]).arg(p).args(["-an", "-frames:v", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-"]).output().ok()?;

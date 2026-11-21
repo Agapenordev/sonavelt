@@ -2,6 +2,9 @@
 name = "sonavelt"
 version = "0.1.0"
 edition = "2024"
+description = "A music player for YouTube, internet radio and your files that takes its colors from what you play"
+license = "MIT"
+repository = "https://github.com/Agapenordev/sonavelt"
 
 [dependencies]
 cpal = "0.18"
