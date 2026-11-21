@@ -43,7 +43,7 @@ pub fn rgba(n: usize) -> Vec<u8> {
 
 /// Same pixels as ARGB32 in network byte order, the tray protocol's format.
 pub fn argb(n: usize) -> Vec<u8> {
-    rgba(n).chunks_exact(4).flat_map(|p| [p[3], p[0], p[1], p[2]]).collect()
+    rgba(n).as_chunks::<4>().0.iter().flat_map(|p| [p[3], p[0], p[1], p[2]]).collect()
 }
 
 fn seg_dist(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {

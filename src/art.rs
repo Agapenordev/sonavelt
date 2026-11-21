@@ -105,7 +105,8 @@ impl ArtCache {
         let ready = self.map.values().filter(|s| matches!(s, Slot::Ready(..))).count();
         if ready > MAX_TEXTURES {
             // forget the least recently drawn; they reload from the disk cache if seen again
-            let mut used: Vec<(u64, String)> = self.map.iter().filter_map(|(k, s)| if let Slot::Ready(_, u) = s { Some((*u, k.clone())) } else { None }).collect();
+            let mut used: Vec<(u64, String)> =
+                self.map.iter().filter_map(|(k, s)| if let Slot::Ready(_, u) = s { Some((*u, k.clone())) } else { None }).collect();
             used.sort();
             for (_, k) in used.into_iter().take(ready - MAX_TEXTURES * 3 / 4) {
                 self.map.remove(&k);
@@ -158,18 +159,38 @@ fn fetch(t: &Track, size: u32) -> Option<Vec<u8>> {
         image::guess_format(&v).is_ok().then_some(v)
     };
     match &t.source {
-        Source::YouTube(id) if size > THUMB => get(&format!("https://i.ytimg.com/vi/{id}/maxresdefault.jpg")).or_else(|| get(&format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg"))),
+        Source::YouTube(id) if size > THUMB => {
+            get(&format!("https://i.ytimg.com/vi/{id}/maxresdefault.jpg")).or_else(|| get(&format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg")))
+        }
         Source::YouTube(id) => get(&format!("https://i.ytimg.com/vi/{id}/mqdefault.jpg")),
         // stations' own logos are often dead links; fall back to the site's icon
         Source::Radio(stream) => t.art.as_deref().and_then(get).or_else(|| {
             let page = t.art.as_deref().unwrap_or(stream);
             let host = page.split("://").nth(1)?.split(['/', ':', '?']).next()?;
             // a shared image host's icon (Google, Wikimedia, a CDN) isn't the station's
-            const SHARED: &[&str] = &["google.", "gstatic.", "wikimedia.", "wikipedia.", "tunein.", "brightspotcdn.", "cloudfront.", "akamai", "imgur.", "githubusercontent.", "duckduckgo.", "bing."];
+            const SHARED: &[&str] = &[
+                "google.",
+                "gstatic.",
+                "wikimedia.",
+                "wikipedia.",
+                "tunein.",
+                "brightspotcdn.",
+                "cloudfront.",
+                "akamai",
+                "imgur.",
+                "githubusercontent.",
+                "duckduckgo.",
+                "bing.",
+            ];
             (!SHARED.iter().any(|s| host.contains(s))).then(|| get(&format!("https://www.google.com/s2/favicons?domain={host}&sz=128")))?
         }),
         Source::Local(p) => {
-            let out = Command::new("ffmpeg").args(["-v", "error", "-i"]).arg(p).args(["-an", "-frames:v", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-"]).output().ok()?;
+            let out = Command::new("ffmpeg")
+                .args(["-v", "error", "-i"])
+                .arg(p)
+                .args(["-an", "-frames:v", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-"])
+                .output()
+                .ok()?;
             (!out.stdout.is_empty()).then_some(out.stdout)
         }
     }
@@ -191,11 +212,7 @@ fn crop_letterbox(i: image::DynamicImage) -> image::DynamicImage {
 
 /// The most colorful cell of the grid, brightened so it reads on dark backgrounds.
 fn accent_of(grid: &[Color32; 16]) -> Color32 {
-    let best = grid
-        .iter()
-        .map(|&c| egui::ecolor::Hsva::from(c))
-        .max_by(|a, b| (a.s * a.v).total_cmp(&(b.s * b.v)))
-        .unwrap();
+    let best = grid.iter().map(|&c| egui::ecolor::Hsva::from(c)).max_by(|a, b| (a.s * a.v).total_cmp(&(b.s * b.v))).unwrap();
     if best.s < 0.18 {
         return crate::theme::FALLBACK_ACCENT;
     }

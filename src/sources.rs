@@ -14,9 +14,7 @@ pub fn scan_folder(dir: &str) -> Vec<Track> {
         .follow_links(true)
         .into_iter()
         .filter_map(Result::ok)
-        .filter(|e| {
-            e.path().extension().and_then(|x| x.to_str()).is_some_and(|x| AUDIO_EXT.contains(&x.to_lowercase().as_str()))
-        })
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()).is_some_and(|x| AUDIO_EXT.contains(&x.to_lowercase().as_str())))
         .map(|e| {
             let stem = e.path().file_stem().unwrap_or_default().to_string_lossy().to_string();
             // shortcut: artist/title from "Artist - Title" filenames, read real tags (lofty) if names are messy
@@ -45,10 +43,7 @@ fn shellexpand(dir: &str) -> String {
 /// Search YouTube, or list a pasted video/playlist URL.
 pub fn youtube_search(query: &str, n: usize) -> Result<Vec<Track>, String> {
     let target = if query.starts_with("http") { query.to_string() } else { format!("ytsearch{n}:{query}") };
-    let out = Command::new("yt-dlp")
-        .args(["--flat-playlist", "-j", "--no-warnings", &target])
-        .output()
-        .map_err(|e| format!("yt-dlp not found: {e}"))?;
+    let out = Command::new("yt-dlp").args(["--flat-playlist", "-j", "--no-warnings", &target]).output().map_err(|e| format!("yt-dlp not found: {e}"))?;
     if !out.status.success() && out.stdout.is_empty() {
         return Err(String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("YouTube search failed").to_string());
     }
@@ -115,10 +110,10 @@ pub fn youtube_stream(id: &str) -> Result<Box<dyn std::io::Read + Send>, String>
             match std::io::Read::read(&mut out, &mut chunk) {
                 Ok(0) => break child.wait().is_ok_and(|s| s.success()),
                 Ok(n) => {
-                    if let Some(f) = &mut file {
-                        if std::io::Write::write_all(f, &chunk[..n]).is_err() {
-                            file = None;
-                        }
+                    if let Some(f) = &mut file
+                        && std::io::Write::write_all(f, &chunk[..n]).is_err()
+                    {
+                        file = None;
                     }
                     writer.data.lock().unwrap().0.extend_from_slice(&chunk[..n]);
                     writer.cv.notify_all();
@@ -187,10 +182,7 @@ pub fn youtube_audio(id: &str) -> Result<String, String> {
         if attempt == 0 {
             cmd.args(["--extractor-args", FAST_CLIENT]); // fast path first, YouTube's default clients after
         }
-        let out = cmd
-            .arg(format!("https://www.youtube.com/watch?v={id}"))
-            .output()
-            .map_err(|e| format!("yt-dlp not found: {e}"))?;
+        let out = cmd.arg(format!("https://www.youtube.com/watch?v={id}")).output().map_err(|e| format!("yt-dlp not found: {e}"))?;
         if let Some(path) = String::from_utf8_lossy(&out.stdout).lines().last().filter(|l| Path::new(l).exists()) {
             return Ok(path.to_string());
         }
@@ -217,7 +209,12 @@ pub fn curated_radios() -> Vec<Track> {
         ("Nightride FM", "synthwave", "https://stream.nightride.fm/nightride.mp3", "https://nightride.fm/thumbnail.png"),
         ("Chillsynth", "chill synthwave", "https://stream.nightride.fm/chillsynth.mp3", "https://nightride.fm/thumbnail.png"),
         ("Jazz24", "straight-ahead jazz", "https://live.wostreaming.net/direct/ppm-jazz24mp3-ibc1", "https://www.jazz24.org/apple-touch-icon.png"),
-        ("BBC Radio 1", "UK · pop & dance", "http://as-hls-ww-live.akamaized.net/pool_904/live/ww/bbc_radio_one/bbc_radio_one.isml/bbc_radio_one-audio%3d96000.norewind.m3u8", "https://cdn-radiotime-logos.tunein.com/s24939q.png"),
+        (
+            "BBC Radio 1",
+            "UK · pop & dance",
+            "http://as-hls-ww-live.akamaized.net/pool_904/live/ww/bbc_radio_one/bbc_radio_one.isml/bbc_radio_one-audio%3d96000.norewind.m3u8",
+            "https://cdn-radiotime-logos.tunein.com/s24939q.png",
+        ),
     ]
     .into_iter()
     .map(|(name, desc, url, art)| Track { title: name.into(), artist: desc.into(), source: Source::Radio(url.into()), duration: None, art: Some(art.into()) })
@@ -271,7 +268,13 @@ pub fn lyrics(t: &Track) -> Result<Lyrics, String> {
     let mut hits: Vec<Value> = req.call().map_err(|e| e.to_string())?.into_json().map_err(|e| e.to_string())?;
     if hits.is_empty() && !artist.is_empty() {
         let q = format!("{artist} {title}");
-        hits = ureq::get("https://lrclib.net/api/search").set("User-Agent", UA).query("q", &q).call().map_err(|e| e.to_string())?.into_json().map_err(|e| e.to_string())?;
+        hits = ureq::get("https://lrclib.net/api/search")
+            .set("User-Agent", UA)
+            .query("q", &q)
+            .call()
+            .map_err(|e| e.to_string())?
+            .into_json()
+            .map_err(|e| e.to_string())?;
     }
     if let Some(synced) = hits.iter().find_map(|h| h["syncedLyrics"].as_str()) {
         return Ok(Lyrics { synced: true, lines: parse_lrc(synced) });
@@ -319,7 +322,13 @@ mod tests {
     #[test]
     fn lrc_and_title_cleaning() {
         assert_eq!(parse_lrc("[01:02.50] hello\n[ti:x]")[0], (62.5, "hello".to_string()));
-        let t = Track { title: "Daft Punk - One More Time (Official Video)".into(), artist: "x".into(), source: Source::YouTube("i".into()), duration: None, art: None };
+        let t = Track {
+            title: "Daft Punk - One More Time (Official Video)".into(),
+            artist: "x".into(),
+            source: Source::YouTube("i".into()),
+            duration: None,
+            art: None,
+        };
         assert_eq!(clean_title(&t), ("Daft Punk".into(), "One More Time".into()));
     }
 }

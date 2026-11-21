@@ -130,15 +130,11 @@ impl Engine {
     }
 }
 
-fn build<T: SizedSample + FromSample<f32>>(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    sh: Arc<Shared>,
-) -> Result<cpal::Stream, String> {
+fn build<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal::StreamConfig, sh: Arc<Shared>) -> Result<cpal::Stream, String> {
     let ch = config.channels as usize;
     device
         .build_output_stream::<T, _, _>(
-            config.clone(),
+            *config,
             move |out: &mut [T], _| {
                 let paused = sh.paused.load(Relaxed);
                 let vol = f32::from_bits(sh.volume.load(Relaxed));
@@ -201,12 +197,11 @@ fn reader(sh: Arc<Shared>, generation: u64, input: Option<String>, pipe: Option<
     let (sh2, last_err2, stderr) = (sh.clone(), last_err.clone(), child.stderr.take().unwrap());
     thread::spawn(move || {
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-            if let Some(d) = line.trim().strip_prefix("Duration: ").and_then(|s| s.split(',').next()) {
-                if let Some(secs) = parse_hms(d) {
-                    if sh2.generation.load(Relaxed) == generation {
-                        sh2.duration_ms.store((secs * 1000.0) as u64, Relaxed);
-                    }
-                }
+            if let Some(d) = line.trim().strip_prefix("Duration: ").and_then(|s| s.split(',').next())
+                && let Some(secs) = parse_hms(d)
+                && sh2.generation.load(Relaxed) == generation
+            {
+                sh2.duration_ms.store((secs * 1000.0) as u64, Relaxed);
             }
             *last_err2.lock().unwrap() = line;
         }
@@ -234,7 +229,7 @@ fn reader(sh: Arc<Shared>, generation: u64, input: Option<String>, pipe: Option<
         total += n;
         carry.extend_from_slice(&bytes[..n]);
         let whole = carry.len() / 4 * 4;
-        let samples = carry[..whole].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+        let samples = carry[..whole].as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]));
         if sh.generation.load(Relaxed) == generation {
             sh.buf.lock().unwrap().extend(samples);
         }

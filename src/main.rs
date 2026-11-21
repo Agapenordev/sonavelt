@@ -18,7 +18,8 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant};
 use theme::*;
 
-const GENRES: &[&str] = &["lofi", "jazz", "house", "techno", "synthwave", "chillout", "hiphop", "rock", "classical", "ambient", "reggae", "kpop", "metal", "afrobeat"];
+const GENRES: &[&str] =
+    &["lofi", "jazz", "house", "techno", "synthwave", "chillout", "hiphop", "rock", "classical", "ambient", "reggae", "kpop", "metal", "afrobeat"];
 const ROW_H: f32 = 56.0;
 
 fn main() -> eframe::Result {
@@ -650,10 +651,10 @@ impl App {
         if pressed(Key::L) {
             self.set_view(View::NowPlaying);
         }
-        if pressed(Key::F) {
-            if let Some(t) = self.current.clone() {
-                self.lib.toggle_fav(&t);
-            }
+        if pressed(Key::F)
+            && let Some(t) = self.current.clone()
+        {
+            self.lib.toggle_fav(&t);
         }
         for (k, d) in [(Key::ArrowUp, 0.05), (Key::ArrowDown, -0.05)] {
             if pressed(k) {
@@ -677,7 +678,12 @@ impl App {
         ui.add_space(28.0);
         let accent = self.aura.accent;
         let live = self.playing();
-        for (ic, label, v) in [(icon::VINYL_RECORD, "Now playing", View::NowPlaying), (icon::YOUTUBE_LOGO, "YouTube", View::YouTube), (icon::RADIO, "Radio", View::Radio), (icon::FOLDER_SIMPLE, "Your files", View::Local)] {
+        for (ic, label, v) in [
+            (icon::VINYL_RECORD, "Now playing", View::NowPlaying),
+            (icon::YOUTUBE_LOGO, "YouTube", View::YouTube),
+            (icon::RADIO, "Radio", View::Radio),
+            (icon::FOLDER_SIMPLE, "Your files", View::Local),
+        ] {
             let dot = (live && v == View::NowPlaying).then_some(accent);
             if nav_item(ui, ic, label, None, self.view == v, dot) {
                 self.set_view(v);
@@ -686,7 +692,11 @@ impl App {
         ui.add_space(24.0);
         section(ui, "Library");
         let counts = [Some(self.lib.favorites.len()), None, Some(self.queue.len())];
-        for ((ic, label, v), count) in [(icon::HEART, "Favorites", View::Favorites), (icon::CLOCK_COUNTER_CLOCKWISE, "Recently played", View::Recent), (icon::QUEUE, "Queue", View::Queue)].into_iter().zip(counts) {
+        for ((ic, label, v), count) in
+            [(icon::HEART, "Favorites", View::Favorites), (icon::CLOCK_COUNTER_CLOCKWISE, "Recently played", View::Recent), (icon::QUEUE, "Queue", View::Queue)]
+                .into_iter()
+                .zip(counts)
+        {
             if nav_item(ui, ic, label, count, self.view == v, None) {
                 self.set_view(v);
             }
@@ -763,7 +773,10 @@ impl App {
                     ui.spacing_mut().item_spacing.x = 12.0;
                     let w = 4.0 * 32.0 + 44.0 + 4.0 * 12.0;
                     ui.add_space((ui.available_width() - w) / 2.0);
-                    if icon_btn(ui, icon::SHUFFLE, self.smart.then_some(accent), 32.0).on_hover_text("Smart Shuffle: leans on your favorites and mixes in recommendations").clicked() {
+                    if icon_btn(ui, icon::SHUFFLE, self.smart.then_some(accent), 32.0)
+                        .on_hover_text("Smart Shuffle: leans on your favorites and mixes in recommendations")
+                        .clicked()
+                    {
                         self.smart = !self.smart;
                         if self.smart && !self.queue.is_empty() {
                             let mut rest = self.queue.split_off(self.qpos + 1);
@@ -809,10 +822,10 @@ impl App {
                         let tag = Rect::from_center_size(r.center(), vec2(60.0, 18.0));
                         p.rect_filled(tag, 9, accent);
                         p.text(tag.center(), egui::Align2::CENTER_CENTER, "LIVE", FontId::monospace(10.0), INK);
-                    } else if let Some(f) = slider(ui, w, dur.map(|d| (pos / d) as f32).unwrap_or(0.0), false, accent) {
-                        if let Some(d) = dur {
-                            self.seek(f as f64 * d);
-                        }
+                    } else if let Some(f) = slider(ui, w, dur.map(|d| (pos / d) as f32).unwrap_or(0.0), false, accent)
+                        && let Some(d) = dur
+                    {
+                        self.seek(f as f64 * d);
                     }
                     let right = if self.buffering { "loading".into() } else { dur.map(fmt_time).unwrap_or("--:--".into()) };
                     ui.add_sized([40.0, 16.0], egui::Label::new(mono(right)));
@@ -835,7 +848,10 @@ impl App {
                 ui.add_space(4.0);
                 ui.label(RichText::new(if self.lib.volume == 0.0 { icon::SPEAKER_X } else { icon::SPEAKER_HIGH }).size(18.0).color(TEXT2));
                 ui.add_space(8.0);
-                let tip = self.sleep_at.map(|t| format!("Pausing in {} min", t.saturating_duration_since(Instant::now()).as_secs() / 60 + 1)).unwrap_or("Sleep timer".into());
+                let tip = self
+                    .sleep_at
+                    .map(|t| format!("Pausing in {} min", t.saturating_duration_since(Instant::now()).as_secs() / 60 + 1))
+                    .unwrap_or("Sleep timer".into());
                 let resp = icon_btn(ui, icon::MOON, self.sleep_at.is_some().then_some(accent), 32.0).on_hover_text(tip);
                 egui::Popup::menu(&resp).show(|ui| {
                     ui.label(RichText::new("Pause after").size(12.0).color(MUTED));
@@ -938,12 +954,27 @@ impl App {
             return;
         }
         let f = self.filter.to_lowercase();
-        let idx: Vec<usize> = (0..list.len()).filter(|&i| f.is_empty() || format!("{} {}", list[i].title, list[i].artist).to_lowercase().contains(&f)).collect();
+        let idx: Vec<usize> =
+            (0..list.len()).filter(|&i| f.is_empty() || format!("{} {}", list[i].title, list[i].artist).to_lowercase().contains(&f)).collect();
         let removable = matches!(which, View::Queue | View::Playlist(_) | View::Favorites);
         let playing_idx = (which == View::Queue && self.current.is_some()).then_some(self.qpos);
         let names: Vec<String> = self.lib.playlists.keys().cloned().collect();
-        let row = RowCtx { lib: &self.lib, current: self.current.as_ref(), playing_idx, recs: &self.recs, names: &names, removable, playing: self.playing(), level: self.level, accent: self.aura.accent };
-        let act = if matches!(which, View::YouTube | View::Radio) { card_grid(ui, &list, &row, &mut self.art, which == View::Radio) } else { track_list(ui, &list, &idx, &row, &mut self.art) };
+        let row = RowCtx {
+            lib: &self.lib,
+            current: self.current.as_ref(),
+            playing_idx,
+            recs: &self.recs,
+            names: &names,
+            removable,
+            playing: self.playing(),
+            level: self.level,
+            accent: self.aura.accent,
+        };
+        let act = if matches!(which, View::YouTube | View::Radio) {
+            card_grid(ui, &list, &row, &mut self.art, which == View::Radio)
+        } else {
+            track_list(ui, &list, &idx, &row, &mut self.art)
+        };
         if let Some(act) = act {
             self.apply(act, &list);
         }
@@ -982,7 +1013,12 @@ impl App {
         }
         // beat: a thin accent ring that breathes with the level
         if cur.is_some() && self.playing() {
-            p.rect_stroke(cover.expand(6.0 + 4.0 * self.level), 22, Stroke::new(1.5, self.aura.accent.gamma_multiply(0.25 + 0.5 * self.level)), egui::StrokeKind::Outside);
+            p.rect_stroke(
+                cover.expand(6.0 + 4.0 * self.level),
+                22,
+                Stroke::new(1.5, self.aura.accent.gamma_multiply(0.25 + 0.5 * self.level)),
+                egui::StrokeKind::Outside,
+            );
         }
 
         let info = Rect::from_min_max(pos2(cover.left(), cover.bottom() + 28.0), pos2(cover.right(), avail.bottom()));
@@ -1173,7 +1209,9 @@ impl eframe::App for App {
             .show_separator_line(false)
             .frame(egui::Frame::new().inner_margin(Margin { left: 20, right: 12, top: 24, bottom: 16 }))
             .show(ui, |ui| self.nav(ui));
-        egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(Margin { left: 32, right: 40, top: 32, bottom: 8 })).show(ui, |ui| self.central(ui));
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().inner_margin(Margin { left: 32, right: 40, top: 32, bottom: 8 }))
+            .show(ui, |ui| self.central(ui));
 
         if let Some((msg, t0)) = self.toast.clone() {
             let age = ctx.input(|i| i.time) - t0;
@@ -1183,9 +1221,14 @@ impl eframe::App for App {
                 let a = ease((age / 0.2).min(1.0).min((3.0 - age) / 0.2) as f32);
                 egui::Area::new("toast".into()).anchor(egui::Align2::CENTER_BOTTOM, vec2(0.0, -124.0 + (1.0 - a) * 8.0)).show(&ctx, |ui| {
                     ui.set_opacity(a);
-                    egui::Frame::new().fill(Color32::from_rgb(30, 30, 34)).corner_radius(20).inner_margin(Margin::symmetric(18, 10)).stroke(Stroke::new(1.0, HAIR)).show(ui, |ui| {
-                        ui.label(RichText::new(msg).color(TEXT));
-                    });
+                    egui::Frame::new()
+                        .fill(Color32::from_rgb(30, 30, 34))
+                        .corner_radius(20)
+                        .inner_margin(Margin::symmetric(18, 10))
+                        .stroke(Stroke::new(1.0, HAIR))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(msg).color(TEXT));
+                        });
                 });
                 ctx.request_repaint();
             }
@@ -1320,7 +1363,13 @@ fn track_list(ui: &mut Ui, list: &[Track], idx: &[usize], c: &RowCtx, cache: &mu
                     RowAct::Play(i)
                 });
             }
-            let resp = if heart.contains(pointer) { resp.on_hover_text(if fav { "Remove from favorites" } else { "Add to favorites" }) } else if plus.contains(pointer) { resp.on_hover_text("Add to queue") } else { resp };
+            let resp = if heart.contains(pointer) {
+                resp.on_hover_text(if fav { "Remove from favorites" } else { "Add to favorites" })
+            } else if plus.contains(pointer) {
+                resp.on_hover_text("Add to queue")
+            } else {
+                resp
+            };
             context_menu(&resp, i, fav, c, &mut act);
         }
     });
@@ -1518,7 +1567,11 @@ fn slider(ui: &mut Ui, w: f32, value: f32, live: bool, fill_col: Color32) -> Opt
 
 fn input<'a>(s: &'a mut String, hint: &str, w: f32, size: f32) -> egui::TextEdit<'a> {
     let pad = (size * 0.7) as i8;
-    egui::TextEdit::singleline(s).hint_text(RichText::new(hint).color(MUTED)).font(FontId::proportional(size)).desired_width(w).margin(Margin::symmetric(pad + 4, pad))
+    egui::TextEdit::singleline(s)
+        .hint_text(RichText::new(hint).color(MUTED))
+        .font(FontId::proportional(size))
+        .desired_width(w)
+        .margin(Margin::symmetric(pad + 4, pad))
 }
 
 fn filter_box(ui: &mut Ui, s: &mut String) {
@@ -1548,7 +1601,10 @@ fn install_desktop_entry() {
         let _ = image::save_buffer(&icon, &logo::rgba(256), 256, 256, image::ExtendedColorType::Rgba8);
     }
     let entry = data.join("applications/sonavelt.desktop");
-    let body = format!("[Desktop Entry]\nType=Application\nName=Sonavelt\nComment=Music from YouTube, radio and your files\nExec={}\nIcon=sonavelt\nCategories=Audio;Music;Player;\nStartupWMClass=sonavelt\n", exe.display());
+    let body = format!(
+        "[Desktop Entry]\nType=Application\nName=Sonavelt\nComment=Music from YouTube, radio and your files\nExec={}\nIcon=sonavelt\nCategories=Audio;Music;Player;\nStartupWMClass=sonavelt\n",
+        exe.display()
+    );
     if std::fs::read_to_string(&entry).ok().as_deref() != Some(body.as_str()) {
         let _ = std::fs::create_dir_all(entry.parent().unwrap());
         let _ = std::fs::write(&entry, body);
@@ -1621,7 +1677,13 @@ fn style(ctx: &egui::Context) {
         s.spacing.interact_size.y = 36.0;
         s.spacing.menu_margin = Margin::same(8);
         s.animation_time = 0.18;
-        for (ts, size) in [(egui::TextStyle::Body, 14.0), (egui::TextStyle::Button, 14.0), (egui::TextStyle::Heading, 28.0), (egui::TextStyle::Small, 12.0), (egui::TextStyle::Monospace, 12.0)] {
+        for (ts, size) in [
+            (egui::TextStyle::Body, 14.0),
+            (egui::TextStyle::Button, 14.0),
+            (egui::TextStyle::Heading, 28.0),
+            (egui::TextStyle::Small, 12.0),
+            (egui::TextStyle::Monospace, 12.0),
+        ] {
             if let Some(f) = s.text_styles.get_mut(&ts) {
                 f.size = size;
             }
@@ -1782,47 +1844,49 @@ impl App {
             .cloned()
             .collect();
         let mut add = None;
-        let resp = egui::Modal::new(egui::Id::new("picker")).frame(egui::Frame::new().fill(MENU).corner_radius(20).inner_margin(24).stroke(Stroke::new(1.0, HAIR))).show(ctx, |ui| {
-            ui.set_width(600.0);
-            ui.label(RichText::new(format!("Add to {name}")).font(FontId::new(34.0, serif())).color(TEXT));
-            ui.label(RichText::new("From your favorites, history, files and YouTube").color(TEXT2));
-            ui.add_space(16.0);
-            ui.horizontal(|ui| {
-                let r = ui.add(input(&mut self.pick_query, &format!("{}  Filter, or search YouTube", icon::MAGNIFYING_GLASS), 420.0, 15.0));
-                let go = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-                if (ui.button(format!("{}  YouTube", icon::YOUTUBE_LOGO)).clicked() || go) && !self.pick_query.trim().is_empty() {
-                    self.yt_query = self.pick_query.clone();
-                    self.search_youtube();
-                    self.pick_query.clear();
-                }
-                if self.busy.contains("yt") {
-                    ui.spinner();
-                }
-            });
-            ui.add_space(12.0);
-            egui::ScrollArea::vertical().max_height(440.0).auto_shrink([false, true]).show(ui, |ui| {
-                if pool.is_empty() {
-                    ui.label(RichText::new("Nothing matches. Press Enter to search YouTube").color(MUTED));
-                }
-                for t in &pool {
-                    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 52.0), Sense::click());
-                    let added = in_list.contains(&t.key());
-                    let h = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.15);
-                    let p = ui.painter();
-                    p.rect_filled(r, 10, white((12.0 * h) as u8));
-                    art_img(p, &mut self.art, t, Rect::from_min_size(r.min + vec2(8.0, 8.0), Vec2::splat(36.0)), 6);
-                    text(p, r.min + vec2(56.0, 8.0), &t.title, 14.0, TEXT, r.width() - 120.0, semibold());
-                    text(p, r.min + vec2(56.0, 27.0), &t.artist, 12.0, TEXT2, r.width() - 120.0, FontFamily::Proportional);
-                    let (ic, col) = if added { (icon::CHECK, self.aura.accent) } else { (icon::PLUS, lerp(TEXT2, TEXT, h)) };
-                    p.text(r.right_center() - vec2(24.0, 0.0), egui::Align2::CENTER_CENTER, ic, FontId::proportional(18.0), col);
-                    if resp.clicked() && !added {
-                        add = Some(t.clone());
+        let resp = egui::Modal::new(egui::Id::new("picker"))
+            .frame(egui::Frame::new().fill(MENU).corner_radius(20).inner_margin(24).stroke(Stroke::new(1.0, HAIR)))
+            .show(ctx, |ui| {
+                ui.set_width(600.0);
+                ui.label(RichText::new(format!("Add to {name}")).font(FontId::new(34.0, serif())).color(TEXT));
+                ui.label(RichText::new("From your favorites, history, files and YouTube").color(TEXT2));
+                ui.add_space(16.0);
+                ui.horizontal(|ui| {
+                    let r = ui.add(input(&mut self.pick_query, &format!("{}  Filter, or search YouTube", icon::MAGNIFYING_GLASS), 420.0, 15.0));
+                    let go = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                    if (ui.button(format!("{}  YouTube", icon::YOUTUBE_LOGO)).clicked() || go) && !self.pick_query.trim().is_empty() {
+                        self.yt_query = self.pick_query.clone();
+                        self.search_youtube();
+                        self.pick_query.clear();
                     }
-                }
+                    if self.busy.contains("yt") {
+                        ui.spinner();
+                    }
+                });
+                ui.add_space(12.0);
+                egui::ScrollArea::vertical().max_height(440.0).auto_shrink([false, true]).show(ui, |ui| {
+                    if pool.is_empty() {
+                        ui.label(RichText::new("Nothing matches. Press Enter to search YouTube").color(MUTED));
+                    }
+                    for t in &pool {
+                        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 52.0), Sense::click());
+                        let added = in_list.contains(&t.key());
+                        let h = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.15);
+                        let p = ui.painter();
+                        p.rect_filled(r, 10, white((12.0 * h) as u8));
+                        art_img(p, &mut self.art, t, Rect::from_min_size(r.min + vec2(8.0, 8.0), Vec2::splat(36.0)), 6);
+                        text(p, r.min + vec2(56.0, 8.0), &t.title, 14.0, TEXT, r.width() - 120.0, semibold());
+                        text(p, r.min + vec2(56.0, 27.0), &t.artist, 12.0, TEXT2, r.width() - 120.0, FontFamily::Proportional);
+                        let (ic, col) = if added { (icon::CHECK, self.aura.accent) } else { (icon::PLUS, lerp(TEXT2, TEXT, h)) };
+                        p.text(r.right_center() - vec2(24.0, 0.0), egui::Align2::CENTER_CENTER, ic, FontId::proportional(18.0), col);
+                        if resp.clicked() && !added {
+                            add = Some(t.clone());
+                        }
+                    }
+                });
+                ui.add_space(16.0);
+                ui.with_layout(egui::Layout::right_to_left(Align::Min), |ui| pill(ui, "Done", TEXT, INK).clicked()).inner
             });
-            ui.add_space(16.0);
-            ui.with_layout(egui::Layout::right_to_left(Align::Min), |ui| pill(ui, "Done", TEXT, INK).clicked()).inner
-        });
         if let Some(t) = add {
             self.lib.playlists.entry(name).or_default().push(t);
             self.lib.save();
@@ -1845,7 +1909,14 @@ impl App {
             });
             row(ui, "Colors", "Follow each song's artwork, or keep one mood", |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    for (pal, label) in [(Palette::Artwork, "Artwork"), (Palette::Midnight, "Midnight"), (Palette::Ember, "Ember"), (Palette::Forest, "Forest"), (Palette::Rose, "Rose"), (Palette::Mono, "Mono")] {
+                    for (pal, label) in [
+                        (Palette::Artwork, "Artwork"),
+                        (Palette::Midnight, "Midnight"),
+                        (Palette::Ember, "Ember"),
+                        (Palette::Forest, "Forest"),
+                        (Palette::Rose, "Rose"),
+                        (Palette::Mono, "Mono"),
+                    ] {
                         let dot = if pal == Palette::Artwork { accent } else { viz::palette(pal).1 };
                         if swatch(ui, label, dot, s.palette == pal) {
                             s.palette = pal;
@@ -1921,7 +1992,9 @@ impl App {
 
             group(ui, "Storage");
             let dir = dirs::cache_dir().unwrap_or_default().join("sonavelt").join("youtube");
-            let size = *self.cache_size.get_or_insert_with(|| walkdir::WalkDir::new(&dir).into_iter().filter_map(Result::ok).filter_map(|e| e.metadata().ok()).filter(|m| m.is_file()).map(|m| m.len()).sum());
+            let size = *self.cache_size.get_or_insert_with(|| {
+                walkdir::WalkDir::new(&dir).into_iter().filter_map(Result::ok).filter_map(|e| e.metadata().ok()).filter(|m| m.is_file()).map(|m| m.len()).sum()
+            });
             let mut clear = false;
             row(ui, "YouTube downloads", &format!("{:.0} MB of songs saved for instant replay", size as f64 / 1e6), |ui| {
                 clear = ui.button("Clear").clicked();
@@ -1933,7 +2006,14 @@ impl App {
             }
 
             group(ui, "Shortcuts");
-            for (keys, what) in [("Space", "Play or pause"), ("← →", "Back or forward 5 seconds"), ("↑ ↓", "Volume"), ("N  P", "Next, previous"), ("L", "Lyrics"), ("F", "Favorite the current song")] {
+            for (keys, what) in [
+                ("Space", "Play or pause"),
+                ("← →", "Back or forward 5 seconds"),
+                ("↑ ↓", "Volume"),
+                ("N  P", "Next, previous"),
+                ("L", "Lyrics"),
+                ("F", "Favorite the current song"),
+            ] {
                 ui.horizontal(|ui| {
                     ui.add_sized([120.0, 28.0], egui::Label::new(RichText::new(keys).font(FontId::monospace(12.0)).color(TEXT)).halign(Align::Min));
                     ui.label(RichText::new(what).color(TEXT2));

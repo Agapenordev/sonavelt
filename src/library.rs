@@ -25,7 +25,8 @@ pub struct Track {
 }
 
 /// Small-capital look-alikes for A..Z (`x` has none, so a NUL placeholder keeps the order).
-const SMALL_CAPS: [char; 26] = ['ᴀ', 'ʙ', 'ᴄ', 'ᴅ', 'ᴇ', 'ꜰ', 'ɢ', 'ʜ', 'ɪ', 'ᴊ', 'ᴋ', 'ʟ', 'ᴍ', 'ɴ', 'ᴏ', 'ᴘ', 'ǫ', 'ʀ', 'ꜱ', 'ᴛ', 'ᴜ', 'ᴠ', 'ᴡ', '\0', 'ʏ', 'ᴢ'];
+const SMALL_CAPS: [char; 26] =
+    ['ᴀ', 'ʙ', 'ᴄ', 'ᴅ', 'ᴇ', 'ꜰ', 'ɢ', 'ʜ', 'ɪ', 'ᴊ', 'ᴋ', 'ʟ', 'ᴍ', 'ɴ', 'ᴏ', 'ᴘ', 'ǫ', 'ʀ', 'ꜱ', 'ᴛ', 'ᴜ', 'ᴠ', 'ᴡ', '\0', 'ʏ', 'ᴢ'];
 
 /// Map "fancy" Unicode letters (𝘴𝘭𝘰𝘸𝘦𝘥, 𝐁𝐎𝐋𝐃 …) that YouTube titles love back to plain ASCII,
 /// since no bundled font has glyphs for them.
@@ -189,10 +190,10 @@ impl Library {
         keyed.sort_by(|a, b| a.0.total_cmp(&b.0));
         *tracks = keyed.into_iter().map(|(_, t)| t).collect();
         for i in 1..tracks.len() {
-            if tracks[i].artist == tracks[i - 1].artist {
-                if let Some(j) = (i + 1..tracks.len()).find(|&j| tracks[j].artist != tracks[i - 1].artist) {
-                    tracks.swap(i, j);
-                }
+            if tracks[i].artist == tracks[i - 1].artist
+                && let Some(j) = (i + 1..tracks.len()).find(|&j| tracks[j].artist != tracks[i - 1].artist)
+            {
+                tracks.swap(i, j);
             }
         }
     }
