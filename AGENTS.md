@@ -101,12 +101,20 @@ For any visible change, run the app and look at it. Include a screenshot in the 
 
 ## Releasing (maintainers)
 
-1. Bump `version` in `Cargo.toml`, commit.
-2. `cargo build --release`, then tag `vX.Y.Z` and create a GitHub release with:
-   - `sonavelt-X.Y.Z-x86_64-linux.tar.gz` (binary, README, LICENSE, icon)
-   - `sonavelt-x86_64-linux` (the bare binary: the in-app updater downloads exactly this name)
-   - `SHA256SUMS`
-3. Installed copies offer the update on their next launch.
+Releases are automatic. Bump `version` in `Cargo.toml` (and `Cargo.lock`, which `cargo build`
+updates), commit, push to `main`. The *Release* workflow (`.github/workflows/release.yml`) then
+tests, builds on Ubuntu 22.04 (glibc 2.35, so the binary runs on older distros too) and publishes
+`vX.Y.Z` with:
+
+- `sonavelt-X.Y.Z-x86_64-linux.tar.gz` (binary, README, LICENSE, icon)
+- `sonavelt-x86_64-linux` (the bare binary: the in-app updater downloads exactly this name)
+- `SHA256SUMS`
+
+Installed copies offer the update on their next launch. A push that doesn't change the version
+does nothing. To check a build without publishing, run the workflow by hand from the Actions tab
+with *dry run* on; the packaged files come back as a downloadable artifact.
+
+Don't create releases by hand: the workflow is the one place asset names and build settings live.
 
 ## Don't
 

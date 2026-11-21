@@ -79,6 +79,12 @@ Say in the PR if an AI wrote a large part of it.
 - Telemetry, accounts, or anything that needs a server.
 - Changes to saved data that break existing libraries without a migration.
 
+## Releases
+
+Maintainers release by bumping `version` in `Cargo.toml` on `main`. GitHub Actions builds and
+publishes it, and installed copies offer the update in Settings. Contributors never need to bump
+the version or build release files.
+
 ## License
 
 By contributing you agree that your work is released under the project's [MIT license](LICENSE).

@@ -1,0 +1,95 @@
+# Bump `version` in Cargo.toml and push to main: this builds Sonavelt and publishes the
+# GitHub release vX.Y.Z, which installed copies then offer as an in-app update.
+# Run it by hand with "dry run" on to build and package without publishing.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: [Cargo.toml]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and package only, don't publish
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    # the oldest supported runner: binaries built against its glibc (2.35) run on newer systems too
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "v$version is already released, nothing to do"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: System libraries
+        if: steps.version.outputs.exists == 'false' || inputs.dry_run
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.version.outputs.exists == 'false' || inputs.dry_run
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.version.outputs.exists == 'false' || inputs.dry_run
+
+      - name: Test and build
+        if: steps.version.outputs.exists == 'false' || inputs.dry_run
+        run: |
+          cargo test
+          cargo build --release
+
+      - name: Package
+        if: steps.version.outputs.exists == 'false' || inputs.dry_run
+        run: |
+          v=${{ steps.version.outputs.version }}
+          dir=sonavelt-$v-x86_64-linux
+          mkdir -p dist/$dir
+          cp target/release/sonavelt README.md LICENSE dist/$dir/
+          cp docs/logo.png dist/$dir/sonavelt.png
+          tar -C dist -czf dist/$dir.tar.gz $dir
+          # the in-app updater downloads exactly this file name
+          cp target/release/sonavelt dist/sonavelt-x86_64-linux
+          cd dist && sha256sum $dir.tar.gz sonavelt-x86_64-linux > SHA256SUMS && cat SHA256SUMS
+
+      - name: Keep build as artifact (dry run)
+        if: inputs.dry_run
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonavelt-${{ steps.version.outputs.version }}
+          path: |
+            dist/*.tar.gz
+            dist/sonavelt-x86_64-linux
+            dist/SHA256SUMS
+
+      - name: Publish release
+        if: steps.version.outputs.exists == 'false' && !inputs.dry_run
+        run: |
+          v=${{ steps.version.outputs.version }}
+          gh release create "v$v" --target "$GITHUB_SHA" --title "Sonavelt $v" --generate-notes \
+            dist/sonavelt-$v-x86_64-linux.tar.gz dist/sonavelt-x86_64-linux dist/SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
