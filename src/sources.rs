@@ -17,12 +17,22 @@ pub fn scan_folder(dir: &str) -> Vec<Track> {
         .filter(|e| e.path().extension().and_then(|x| x.to_str()).is_some_and(|x| AUDIO_EXT.contains(&x.to_lowercase().as_str())))
         .map(|e| {
             let stem = e.path().file_stem().unwrap_or_default().to_string_lossy().to_string();
-            // shortcut: artist/title from "Artist - Title" filenames, read real tags (lofty) if names are messy
-            let (artist, title) = match stem.split_once(" - ") {
+            // untagged files: "Artist - Title" filenames, else the folder name as the artist
+            let (mut artist, mut title) = match stem.split_once(" - ") {
                 Some((a, t)) => (a.trim().to_string(), t.trim().to_string()),
                 None => (parent_name(e.path()), stem),
             };
-            Track { title, artist, source: Source::Local(e.path().to_path_buf()), duration: None, art: None }
+            let mut duration = None;
+            if let Ok(file) = lofty::read_from_path(e.path()) {
+                use lofty::prelude::*;
+                duration = Some(file.properties().duration().as_secs_f64()).filter(|d| *d > 0.0);
+                if let Some(tag) = file.primary_tag().or_else(|| file.first_tag()) {
+                    let clean = |v: Option<std::borrow::Cow<str>>| v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+                    title = clean(tag.title()).unwrap_or(title);
+                    artist = clean(tag.artist()).unwrap_or(artist);
+                }
+            }
+            Track { title, artist, source: Source::Local(e.path().to_path_buf()), duration, art: None }
         })
         .collect();
     v.sort_by(|a, b| (&a.artist, &a.title).cmp(&(&b.artist, &b.title)));
@@ -193,6 +203,32 @@ pub fn youtube_audio(id: &str) -> Result<String, String> {
     Err(err)
 }
 
+/// The song a station is playing right now, from the stream's ICY metadata. Reads only up to
+/// the first metadata block (a few KB), so it's cheap to call every so often.
+pub fn radio_now(url: &str) -> Option<String> {
+    use std::io::Read;
+    let resp = ureq::get(url)
+        .set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) sonavelt/0.1")
+        .set("Icy-MetaData", "1")
+        .timeout(std::time::Duration::from_secs(10))
+        .call()
+        .ok()?;
+    let every: u64 = resp.header("icy-metaint")?.trim().parse().ok()?;
+    let mut r = resp.into_reader();
+    std::io::copy(&mut (&mut r).take(every), &mut std::io::sink()).ok()?;
+    let mut len = [0u8];
+    r.read_exact(&mut len).ok()?;
+    let mut meta = vec![0; len[0] as usize * 16];
+    r.read_exact(&mut meta).ok()?;
+    parse_icy(&String::from_utf8_lossy(&meta))
+}
+
+/// `StreamTitle='Artist - Song';StreamUrl='';` -> "Artist - Song"
+fn parse_icy(meta: &str) -> Option<String> {
+    let title = meta.split("StreamTitle='").nth(1)?.split("';").next()?.trim();
+    (!title.is_empty() && title != "-").then(|| crate::library::plain_text(title))
+}
+
 /// Hand-picked stations that are reliably great.
 pub fn curated_radios() -> Vec<Track> {
     [
@@ -320,6 +356,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn scan_reads_tags_and_falls_back_to_filenames() {
+        use lofty::prelude::*;
+        let dir = std::env::temp_dir().join(format!("sonavelt-scan-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // one second of silent 8 kHz mono WAV
+        let wav = |path: &std::path::Path| {
+            let n: u32 = 8000;
+            let mut b = Vec::new();
+            for part in [&b"RIFF"[..], &(36 + n).to_le_bytes(), b"WAVEfmt ", &16u32.to_le_bytes(), &1u16.to_le_bytes(), &1u16.to_le_bytes()] {
+                b.extend_from_slice(part);
+            }
+            for part in [&n.to_le_bytes()[..], &n.to_le_bytes(), &1u16.to_le_bytes(), &8u16.to_le_bytes(), b"data", &n.to_le_bytes()] {
+                b.extend_from_slice(part);
+            }
+            b.resize(b.len() + n as usize, 128);
+            std::fs::write(path, b).unwrap();
+        };
+        let tagged = dir.join("track01.wav");
+        wav(&tagged);
+        let mut tag = lofty::tag::Tag::new(lofty::tag::TagType::Id3v2);
+        tag.set_title("Real Title".into());
+        tag.set_artist("Real Artist".into());
+        tag.save_to_path(&tagged, lofty::config::WriteOptions::default()).unwrap();
+        wav(&dir.join("Some Band - Some Song.wav"));
+
+        let found = scan_folder(dir.to_str().unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
+        let get = |t: &str| found.iter().find(|x| x.title == t).unwrap_or_else(|| panic!("{t} missing from {found:?}"));
+        assert_eq!(get("Real Title").artist, "Real Artist");
+        assert_eq!(get("Some Song").artist, "Some Band");
+        assert!(get("Real Title").duration.is_some_and(|d| (d - 1.0).abs() < 0.05));
+    }
+
+    #[test]
+    fn icy_titles() {
+        assert_eq!(parse_icy("StreamTitle='Boards of Canada - Roygbiv';StreamUrl='';\0\0").as_deref(), Some("Boards of Canada - Roygbiv"));
+        assert_eq!(parse_icy("StreamTitle='It's Here - Song';"), Some("It's Here - Song".into()));
+        assert_eq!(parse_icy("StreamTitle='';"), None);
+        assert_eq!(parse_icy("StreamUrl='x';"), None);
+    }
+
+    #[test]
     fn lrc_and_title_cleaning() {
         assert_eq!(parse_lrc("[01:02.50] hello\n[ti:x]")[0], (62.5, "hello".to_string()));
         let t = Track {
@@ -336,6 +414,16 @@ mod tests {
 #[cfg(test)]
 mod net_tests {
     // Hits the network; run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn radio_now_from_live_stations() {
+        for url in ["https://stream.radioparadise.com/mp3-192", "https://ice1.somafm.com/groovesalad-128-mp3"] {
+            let now = super::radio_now(url);
+            eprintln!("{url}: {now:?}");
+            assert!(now.is_some(), "no song title from {url}");
+        }
+    }
+
     #[test]
     #[ignore]
     fn youtube_download_and_decode() {

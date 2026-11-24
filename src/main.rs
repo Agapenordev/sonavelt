@@ -2,6 +2,7 @@ mod art;
 mod audio;
 mod library;
 mod logo;
+mod mpris;
 mod sources;
 mod theme;
 mod tray;
@@ -76,6 +77,7 @@ enum Msg {
     Resolved(u64, Result<String, String>),
     Lyrics(String, Result<Lyrics, String>),
     Recs(Vec<Track>),
+    RadioNow(u64, Option<String>),
     UpdateChecked(bool, Result<Option<updater::Release>, String>),
     UpdateInstalled(Result<String, String>),
 }
@@ -129,6 +131,9 @@ struct App {
     view: View,
     yt_fallback: bool,
     prefetched: HashSet<String>,
+    /// Song the current station is playing, from its stream metadata.
+    radio_now: Option<String>,
+    radio_polled: Option<Instant>,
     view_since: f64,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
@@ -157,6 +162,7 @@ struct App {
     marquee_phase: f32,
     logo: egui::TextureHandle,
     tray: Option<tray::Handle>,
+    mpris: Option<mpris::Mpris>,
     tray_rx: Receiver<tray::TrayCmd>,
     tray_state: (String, bool),
     quitting: bool,
@@ -188,11 +194,13 @@ impl App {
         }
         ctx.set_zoom_factor(lib.settings.ui_scale);
         let (tray_tx, tray_rx) = channel();
+        let mpris = mpris::Mpris::spawn(tray_tx.clone(), ctx.clone());
         let tray = tray::spawn(tray_tx, ctx.clone());
         let mut app = Self {
             marquee_phase: 0.0,
             logo: logo_texture(&ctx),
             tray,
+            mpris,
             tray_rx,
             tray_state: (String::new(), false),
             quitting: false,
@@ -209,6 +217,8 @@ impl App {
             view: View::NowPlaying,
             yt_fallback: false,
             prefetched: HashSet::new(),
+            radio_now: None,
+            radio_polled: None,
             view_since: 0.0,
             tx,
             rx,
@@ -367,6 +377,8 @@ impl App {
             },
         }
         self.yt_fallback = false;
+        self.radio_now = None;
+        self.radio_polled = None;
         self.lib.played(&t);
         self.current = Some(t);
         self.fetch_lyrics();
@@ -569,6 +581,13 @@ impl App {
                         Err(e) => Update::Failed(e),
                     };
                 }
+                Msg::RadioNow(generation, now) => {
+                    self.busy.remove("icy");
+                    // keep the last known song when one poll comes back empty
+                    if generation == self.play_gen && now.is_some() {
+                        self.radio_now = now;
+                    }
+                }
                 Msg::Recs(v) => {
                     self.busy.remove("recs");
                     let mut at = self.qpos + 2;
@@ -619,6 +638,8 @@ impl App {
         };
         self.aura.update(&grid, accent, dt);
         self.tray_tick();
+        self.poll_radio_now();
+        self.mpris_tick();
         // the aura drifts continuously; when idle it only needs a few frames a second
         if playing || self.buffering {
             ctx.request_repaint();
@@ -757,7 +778,8 @@ impl App {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     ui.add_space(9.0);
                     ui.add(egui::Label::new(RichText::new(&t.title).font(FontId::new(14.0, semibold())).color(TEXT)).truncate());
-                    ui.add(egui::Label::new(RichText::new(&t.artist).size(13.0).color(TEXT2)).truncate());
+                    let sub = if t.is_radio() { self.radio_now.as_deref().unwrap_or(&t.artist) } else { &t.artist };
+                    ui.add(egui::Label::new(RichText::new(sub).size(13.0).color(TEXT2)).truncate());
                 });
                 let fav = self.lib.is_fav(&t);
                 if heart_btn(ui, fav).on_hover_text("Favorite  F").clicked() {
@@ -1030,6 +1052,17 @@ impl App {
                     job.wrap = egui::text::TextWrapping { max_width: info.width(), max_rows: 3, break_anywhere: false, overflow_character: Some('…') };
                     ui.add(egui::Label::new(job));
                     ui.label(RichText::new(&t.artist).size(16.0).color(TEXT2));
+                    if let Some(now) = self.radio_now.clone().filter(|_| t.is_radio()) {
+                        ui.add_space(16.0);
+                        ui.label(RichText::new("On air").font(FontId::monospace(12.0)).color(MUTED));
+                        ui.add(egui::Label::new(RichText::new(&now).font(FontId::new(18.0, semibold())).color(TEXT)).wrap());
+                        ui.add_space(8.0);
+                        if pill(ui, &format!("{}  Find on YouTube", icon::YOUTUBE_LOGO), white(26), TEXT).clicked() {
+                            self.yt_query = now;
+                            self.search_youtube();
+                            self.set_view(View::YouTube);
+                        }
+                    }
                 }
                 None => {
                     ui.label(RichText::new("Nothing playing").font(FontId::new(40.0, serif())).color(TEXT));
@@ -1729,7 +1762,8 @@ impl App {
         let rows = ((r.height() / (size * 0.92)).floor() as usize).max(1);
         let gap = (r.height() - rows as f32 * size * 0.92) / 2.0;
         for i in 0..rows {
-            let text = if i % 2 == 0 { &t.title } else { &t.artist };
+            let second = if t.is_radio() { self.radio_now.as_ref().unwrap_or(&t.artist) } else { &t.artist };
+            let text = if i % 2 == 0 { &t.title } else { second };
             let col = if i == rows / 2 { self.aura.accent.gamma_multiply(0.45 + 0.4 * self.level) } else { white((16.0 + 22.0 * self.level) as u8) };
             let g = p.layout_no_wrap(format!("{text}  —  "), FontId::new(size, serif()), col);
             let w = g.size().x.max(1.0);
@@ -1769,11 +1803,62 @@ impl App {
         }
     }
 
+    /// Keep media keys, lock screens and desktop widgets in step with what's playing.
+    fn mpris_tick(&mut self) {
+        if self.mpris.is_none() {
+            return;
+        }
+        let status = match (&self.engine, &self.current) {
+            (Ok(e), Some(_)) if e.active() && !e.paused() => "Playing",
+            (_, Some(_)) => "Paused", // a loaded song is resumable, so media keys can start it
+            _ => "Stopped",
+        };
+        let now = match &self.current {
+            None => mpris::Now { status, volume: self.lib.volume as f64, ..Default::default() },
+            Some(t) => {
+                let (title, artist, album) = match (&t.source, &self.radio_now) {
+                    (Source::Radio(_), Some(song)) => match song.split_once(" - ") {
+                        Some((a, s)) => (s.to_string(), a.to_string(), t.title.clone()),
+                        None => (song.clone(), t.title.clone(), t.title.clone()),
+                    },
+                    (Source::Radio(_), None) => (t.title.clone(), t.artist.clone(), String::new()),
+                    _ => (t.title.clone(), t.artist.clone(), String::new()),
+                };
+                let art = match &t.source {
+                    Source::YouTube(id) => Some(format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg")),
+                    Source::Radio(_) => t.art.clone(),
+                    Source::Local(_) => None,
+                };
+                let length = if t.is_radio() { None } else { self.duration() };
+                mpris::Now { status, id: self.play_gen, title, artist, album, art, length, volume: self.lib.volume as f64 }
+            }
+        };
+        let position = self.position();
+        if let Some(m) = &mut self.mpris {
+            m.update(now, position);
+        }
+    }
+
+    /// While a station plays, ask it what song is on about every 20 seconds.
+    fn poll_radio_now(&mut self) {
+        let Some(Source::Radio(url)) = self.current.as_ref().map(|t| t.source.clone()) else { return };
+        if !self.playing() || self.busy.contains("icy") || self.radio_polled.is_some_and(|t| t.elapsed() < Duration::from_secs(20)) {
+            return;
+        }
+        self.radio_polled = Some(Instant::now());
+        let generation = self.play_gen;
+        self.spawn("icy", move || Msg::RadioNow(generation, sources::radio_now(&url)));
+    }
+
     fn tray_tick(&mut self) {
         while let Ok(cmd) = self.tray_rx.try_recv() {
             self.tray_cmd(cmd);
         }
-        let now = self.current.as_ref().map(|t| format!("{} — {}", t.title, t.artist)).unwrap_or("Nothing playing".into());
+        let now = match (&self.current, &self.radio_now) {
+            (Some(t), Some(song)) if t.is_radio() => format!("{song} — {}", t.title),
+            (Some(t), _) => format!("{} — {}", t.title, t.artist),
+            _ => "Nothing playing".into(),
+        };
         let state = (now, self.playing());
         if state != self.tray_state {
             if let Some(h) = &self.tray {
@@ -1800,6 +1885,9 @@ impl App {
             let ctx = self.ctx.clone();
             h.update(|t| t.ctx = ctx);
         }
+        if let Some(m) = &self.mpris {
+            m.set_ctx(&self.ctx);
+        }
     }
 
     /// Runs while the window is closed: keeps the queue moving and answers the tray.
@@ -1822,6 +1910,7 @@ impl App {
             tray::TrayCmd::Toggle => self.toggle_play(),
             tray::TrayCmd::Next => self.next(false),
             tray::TrayCmd::Prev => self.prev(),
+            tray::TrayCmd::SeekTo(t) => self.seek(t),
             tray::TrayCmd::Show => self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus),
             tray::TrayCmd::Quit => {
                 self.quitting = true;

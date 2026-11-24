@@ -10,6 +10,8 @@ pub enum TrayCmd {
     Prev,
     Show,
     Quit,
+    /// Jump to this many seconds (from media controls).
+    SeekTo(f64),
 }
 
 pub struct RwTray {

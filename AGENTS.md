@@ -32,13 +32,14 @@ run them when you touch `audio.rs`, `sources.rs` or `updater.rs`.
 |---|---|
 | `src/main.rs` | `App` state, every view, the dock, widgets, styling, and the window loop in `main()` |
 | `src/audio.rs` | `Engine`: ffmpeg reader thread, buffer, cpal callback, position, levels |
-| `src/sources.rs` | Local scan, YouTube search/stream/download, radio directory, lyrics |
+| `src/sources.rs` | Local scan and tags, YouTube search/stream/download, radio directory and on-air song, lyrics |
 | `src/library.rs` | `Track`, `Library` (saved to `~/.config/sonavelt/library.json`), `Settings`, Smart Shuffle |
 | `src/art.rs` | Artwork workers, disk cache, textures, 4×4 color grid, eviction |
 | `src/viz.rs` | Aura and blurred-cover backgrounds, palettes, the playing equalizer, fallback covers |
 | `src/theme.rs` | Colors and font families. All UI colors come from here |
 | `src/logo.rs` | The logo, drawn from distance fields at any size |
-| `src/tray.rs` | StatusNotifierItem tray (ksni) |
+| `src/tray.rs` | StatusNotifierItem tray (ksni); `TrayCmd` is also the command channel for MPRIS |
+| `src/mpris.rs` | MPRIS media controls over D-Bus (zbus): media keys, lock screen, desktop widgets |
 | `src/updater.rs` | GitHub release check, download, validation and swap |
 
 ## Rules that keep this codebase working

@@ -20,15 +20,19 @@ one matters to you, open an issue or add a thumbs-up to an existing one. Want to
 - Automatic releases from CI, built against glibc 2.35 so downloads run on Ubuntu 22.04, Debian 12,
   Fedora 36 and newer
 
+## Done, coming in the next release
+
+- **Media keys and desktop integration (MPRIS).** Play, pause, skip and seek from media keys, the
+  lock screen and desktop widgets, which also show the current song with its artwork.
+- **Real tags for local files.** Title, artist and length come from the file's tags, with the
+  `Artist - Title` filename as the fallback.
+- **What's playing on the radio.** The song a station is playing shows under it, in the player and
+  in media widgets, with a button to find it on YouTube.
+
 ## Next
 
-- **Media keys and desktop integration (MPRIS).** Play, pause and skip from keyboard media keys,
-  the lock screen and desktop widgets, and show the current song in your bar.
-- **Real tags for local files.** Read title, artist and album from the file instead of guessing
-  from `Artist - Title` filenames.
-- **What's playing on the radio.** Show the current song from the station's stream metadata, and
-  let you heart it or search it on YouTube.
 - **Packages.** AUR, Flatpak, and a `.deb`/`.rpm`.
+- **Albums and artists views** for local libraries, now that tags are read.
 
 ## Later
 
@@ -36,7 +40,6 @@ one matters to you, open an issue or add a thumbs-up to an existing one. Want to
 - **Equalizer and volume normalization**, so loud and quiet songs sit at the same level.
 - **Import a YouTube playlist** as a Sonavelt playlist, and export playlists to M3U.
 - **Lyrics timing nudge** for files whose lyrics run early or late.
-- **Albums and artists views** for local libraries.
 - **Light theme.**
 
 ## Maybe someday

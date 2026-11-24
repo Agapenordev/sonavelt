@@ -3,7 +3,7 @@ name = "sonavelt"
 version = "0.1.1"
 edition = "2024"
 rust-version = "1.88"
-description = "A music player for YouTube, internet radio and your files that takes its colors from what you play"
+description = "A fast, native music player for Linux: YouTube, internet radio and your own files, with synced lyrics"
 license = "MIT"
 repository = "https://github.com/Agapenordev/sonavelt"
 
@@ -14,11 +14,13 @@ eframe = { version = "0.36", default-features = false, features = ["glow", "wayl
 egui-phosphor = { version = "0.14", features = ["regular", "fill"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "ico"] }
 ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
+lofty = "0.24.0"
 rand = "0.9"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 ureq = { version = "2", features = ["json"] }
 walkdir = "2"
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 
 [profile.release]
 lto = "thin"

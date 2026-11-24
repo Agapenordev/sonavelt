@@ -4,8 +4,8 @@
 
 # Sonavelt
 
-**A music player that takes its colors from what you're listening to.**
-YouTube, internet radio and your own files, in one fast native app written in Rust.
+**A fast, native music player for Linux.**
+YouTube, internet radio and your own files in one place, with synced lyrics. Written in Rust.
 
 [![Release](https://img.shields.io/github/v/release/Agapenordev/sonavelt?color=b0264a)](https://github.com/Agapenordev/sonavelt/releases/latest)
 [![CI](https://github.com/Agapenordev/sonavelt/actions/workflows/ci.yml/badge.svg)](https://github.com/Agapenordev/sonavelt/actions/workflows/ci.yml)
@@ -44,6 +44,12 @@ and starts YouTube songs in about two seconds.
 - **Smart Shuffle** leans toward your favorites and most-played songs, keeps songs you just heard
   out of the way, avoids the same artist twice in a row, and mixes in recommendations.
 - The next YouTube song downloads in the background, so skipping is instant.
+
+**Plays well with your desktop**
+- Media keys, the lock screen and desktop media widgets control Sonavelt and show the current song
+  with its artwork (MPRIS).
+- Radio stations show the song they're playing, with a button to find it on YouTube.
+- Local files use their real tags for title, artist and length.
 
 **Lyrics**
 - Time-synced lyrics from [LRCLIB](https://lrclib.net). The current line lights up and scrolls
