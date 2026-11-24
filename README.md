@@ -7,13 +7,13 @@
 **A fast, native music player for Linux.**
 YouTube, internet radio and your own files in one place, with synced lyrics. Written in Rust.
 
-[![Release](https://img.shields.io/github/v/release/Agapenordev/sonavelt?color=b0264a)](https://github.com/Agapenordev/sonavelt/releases/latest)
+[![Release](https://img.shields.io/badge/release-latest-b0264a)](https://github.com/Agapenordev/sonavelt/releases/latest)
 [![CI](https://github.com/Agapenordev/sonavelt/actions/workflows/ci.yml/badge.svg)](https://github.com/Agapenordev/sonavelt/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-f8ead6)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Linux-5c0f2a)
 ![Rust](https://img.shields.io/badge/made%20with-Rust-b0264a)
 
-<img src="docs/now-playing.png" alt="Sonavelt playing SomaFM Groove Salad: the window glows green from the cover art">
+<img src="docs/home.png" alt="Sonavelt's Home page: quick tiles for favorites and playlists, then a Made for you shelf of album-art cards">
 
 </div>
 
@@ -75,7 +75,7 @@ and starts YouTube songs in about two seconds.
 ## Screenshots
 
 <div align="center">
-<img src="docs/home.png" alt="Home page with quick tiles and a Made for you shelf of album-art cards">
+<img src="docs/now-playing.png" alt="Now playing SomaFM Groove Salad, with the song on air and the title sliding in large letters">
 </div>
 
 | Radio | YouTube |
