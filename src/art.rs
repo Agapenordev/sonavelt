@@ -34,7 +34,7 @@ const THUMB: u32 = 256;
 const HI: u32 = 640;
 const MAX_TEXTURES: usize = 160;
 /// Bump to invalidate every cached image (older versions cached wrong fallback logos).
-const ART_DIR: &str = "art-v3";
+const ART_DIR: &str = "art-v4";
 
 pub struct ArtCache {
     map: HashMap<String, Slot>,
@@ -48,7 +48,7 @@ impl ArtCache {
         let (jobs, job_rx) = channel::<Job>();
         let (done_tx, done) = channel::<Done>();
         let job_rx = Arc::new(Mutex::new(job_rx));
-        for old in ["art", "art-v2"] {
+        for old in ["art", "art-v2", "art-v3"] {
             let _ = std::fs::remove_dir_all(dirs::cache_dir().unwrap_or_default().join("sonavelt").join(old));
         }
         // network-bound, so more workers than cores: one slow logo server can't stall the grid
@@ -142,29 +142,35 @@ fn load(key: &str, t: &Track, size: u32) -> Option<image::RgbaImage> {
     if let Ok(img) = image::open(&file) {
         return Some(img.to_rgba8());
     }
-    let img = fetch(t, size).and_then(|b| image::load_from_memory(&b).ok())?;
-    let img = crop_letterbox(img);
+    let (bytes, keep) = fetch(t, size)?;
+    let img = crop_letterbox(image::load_from_memory(&bytes).ok()?);
     let img = if img.width().max(img.height()) > size { img.resize(size, size, image::imageops::FilterType::Triangle) } else { img }.to_rgba8();
-    let _ = std::fs::create_dir_all(&dir);
-    let _ = img.save(&file);
+    // a stand-in (a site icon because the real logo didn't load) is not cached: retry next launch
+    if keep {
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = img.save(&file);
+    }
     Some(img)
 }
 
-fn fetch(t: &Track, size: u32) -> Option<Vec<u8>> {
+/// Image bytes, and whether they are the real artwork (worth caching) rather than a stand-in.
+fn fetch(t: &Track, size: u32) -> Option<(Vec<u8>, bool)> {
     let get = |url: &str| -> Option<Vec<u8>> {
-        let resp = ureq::get(url).set("User-Agent", "Mozilla/5.0 sonavelt/0.1").timeout(std::time::Duration::from_secs(6)).call().ok()?;
+        // some logo servers are slow but fine; give them time before falling back
+        let resp = ureq::get(url).set("User-Agent", "Mozilla/5.0 sonavelt/0.1").timeout(std::time::Duration::from_secs(10)).call().ok()?;
         let mut v = Vec::new();
         std::io::Read::read_to_end(&mut std::io::Read::take(resp.into_reader(), 8 << 20), &mut v).ok()?;
         // some servers answer 200 with an HTML error page
         image::guess_format(&v).is_ok().then_some(v)
     };
+    let real = |b: Vec<u8>| (b, true);
     match &t.source {
         Source::YouTube(id) if size > THUMB => {
-            get(&format!("https://i.ytimg.com/vi/{id}/maxresdefault.jpg")).or_else(|| get(&format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg")))
+            get(&format!("https://i.ytimg.com/vi/{id}/maxresdefault.jpg")).or_else(|| get(&format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg"))).map(real)
         }
-        Source::YouTube(id) => get(&format!("https://i.ytimg.com/vi/{id}/mqdefault.jpg")),
+        Source::YouTube(id) => get(&format!("https://i.ytimg.com/vi/{id}/mqdefault.jpg")).map(real),
         // stations' own logos are often dead links; fall back to the site's icon
-        Source::Radio(stream) => t.art.as_deref().and_then(get).or_else(|| {
+        Source::Radio(stream) => t.art.as_deref().and_then(get).map(real).or_else(|| {
             let page = t.art.as_deref().unwrap_or(stream);
             let host = page.split("://").nth(1)?.split(['/', ':', '?']).next()?;
             // a shared image host's icon (Google, Wikimedia, a CDN) isn't the station's
@@ -182,7 +188,9 @@ fn fetch(t: &Track, size: u32) -> Option<Vec<u8>> {
                 "duckduckgo.",
                 "bing.",
             ];
-            (!SHARED.iter().any(|s| host.contains(s))).then(|| get(&format!("https://www.google.com/s2/favicons?domain={host}&sz=128")))?
+            let icon = (!SHARED.iter().any(|s| host.contains(s))).then(|| get(&format!("https://www.google.com/s2/favicons?domain={host}&sz=128")))??;
+            // a station with no logo of its own keeps the icon for good; a logo that failed retries
+            Some((icon, t.art.is_none() || t.art.as_deref().is_some_and(|a| a.contains("google.com/s2/favicons"))))
         }),
         Source::Local(p) => {
             let out = Command::new("ffmpeg")
@@ -191,7 +199,7 @@ fn fetch(t: &Track, size: u32) -> Option<Vec<u8>> {
                 .args(["-an", "-frames:v", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-"])
                 .output()
                 .ok()?;
-            (!out.stdout.is_empty()).then_some(out.stdout)
+            (!out.stdout.is_empty()).then_some((out.stdout, true))
         }
     }
 }

@@ -29,10 +29,13 @@ one matters to you, open an issue or add a thumbs-up to an existing one. Want to
 - **What's playing on the radio.** The song a station is playing shows under it, in the player and
   in media widgets, with a button to find it on YouTube.
 
-## Done, coming in the next release
+## Shipped in 0.3
 
-- **Home page.** Spotify-style quick tiles and shelves of picks (Made for you, More like…,
-  Jump back in, Stations for you), recommended from what you play.
+- **Home page.** Spotify-style quick tiles and shelves of picks: Made for you, a shelf per
+  interest, Jump back in and Stations for you.
+- **Recommendations that learn like YouTube's.** Interests from your songs and your stations'
+  genres, weighted by listening time; skips, un-hearts, *Not interested*, *Don't recommend this
+  artist* and ignored picks all teach it.
 
 ## Next
 
