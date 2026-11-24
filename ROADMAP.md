@@ -20,7 +20,7 @@ one matters to you, open an issue or add a thumbs-up to an existing one. Want to
 - Automatic releases from CI, built against glibc 2.35 so downloads run on Ubuntu 22.04, Debian 12,
   Fedora 36 and newer
 
-## Done, coming in the next release
+## Shipped in 0.2
 
 - **Media keys and desktop integration (MPRIS).** Play, pause, skip and seek from media keys, the
   lock screen and desktop widgets, which also show the current song with its artwork.
