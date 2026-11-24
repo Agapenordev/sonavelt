@@ -122,6 +122,8 @@ enum RowAct {
     Enqueue(usize),
     AddTo(usize, String),
     Remove(usize),
+    Hide(usize),
+    HideArtist(usize),
 }
 
 struct App {
@@ -163,6 +165,7 @@ struct App {
     sleep_at: Option<Instant>,
     toast: Option<(String, f64)>,
     last_time: f64,
+    listen_clock: Instant,
     marquee_phase: f32,
     logo: egui::TextureHandle,
     tray: Option<tray::Handle>,
@@ -249,6 +252,7 @@ impl App {
             sleep_at: None,
             toast: None,
             last_time: 0.0,
+            listen_clock: Instant::now(),
             lib,
         };
         app.scan();
@@ -419,6 +423,10 @@ impl App {
     }
 
     fn next(&mut self, auto: bool) {
+        // skipping in the first 30 seconds says you didn't want it
+        if let Some(t) = self.current.clone().filter(|t| !auto && !t.is_radio() && self.playing() && self.position() < 30.0) {
+            self.lib.skipped(&t);
+        }
         if auto && self.repeat == Repeat::One {
             self.start();
         } else if self.qpos + 1 < self.queue.len() {
@@ -501,7 +509,20 @@ impl App {
             }
             RowAct::Play(i) if matches!(self.view, View::YouTube | View::Radio | View::NowPlaying) || list[i].is_radio() => self.play_now(list[i].clone()),
             RowAct::Play(i) => self.play_list(list.to_vec(), i),
-            RowAct::Fav(i) => self.lib.toggle_fav(&list[i]),
+            RowAct::Fav(i) => {
+                self.lib.toggle_fav(&list[i]);
+                if !self.lib.is_fav(&list[i]) {
+                    self.refresh_home(); // un-hearted: rebuild picks without it
+                }
+            }
+            RowAct::Hide(i) => {
+                self.lib.hide(&list[i]);
+                self.toast("Got it. That song won't be in your picks");
+            }
+            RowAct::HideArtist(i) => {
+                self.lib.hide_artist(&list[i]);
+                self.toast(format!("No more {} in your picks", list[i].artist));
+            }
             RowAct::Next(i) => {
                 let at = if self.current.is_some() { (self.qpos + 1).min(self.queue.len()) } else { 0 };
                 self.queue.insert(at, list[i].clone());
@@ -594,6 +615,14 @@ impl App {
                     };
                 }
                 Msg::Home(home) => {
+                    let seen = &mut self.lib.feedback.impressions;
+                    for t in home.shelves.iter().flat_map(|s| &s.tracks) {
+                        *seen.entry(t.key()).or_default() += 1;
+                    }
+                    if seen.len() > 3000 {
+                        seen.retain(|_, n| *n > 1);
+                    }
+                    self.lib.save();
                     self.busy.remove("home");
                     home.save();
                     self.home = home;
@@ -601,7 +630,11 @@ impl App {
                 Msg::RadioNow(generation, now) => {
                     self.busy.remove("icy");
                     // keep the last known song when one poll comes back empty
-                    if generation == self.play_gen && now.is_some() {
+                    if generation == self.play_gen && now.is_some() && now != self.radio_now {
+                        if let (Some(song), Some(station)) = (&now, &self.current) {
+                            self.lib.radio_songs.insert(0, (station.key(), song.clone()));
+                            self.lib.radio_songs.truncate(200);
+                        }
                         self.radio_now = now;
                     }
                 }
@@ -622,6 +655,12 @@ impl App {
 
         let now = ctx.input(|i| i.time);
         let dt = ((now - self.last_time) as f32).clamp(0.0, 0.1);
+        // wall clock, not the UI clock: this also runs with the window closed
+        let heard = self.listen_clock.elapsed().as_secs_f64().min(1.0);
+        self.listen_clock = Instant::now();
+        if let Some(t) = self.current.as_ref().filter(|_| self.engine.as_ref().is_ok_and(|e| e.active() && !e.paused())) {
+            *self.lib.listened.entry(t.key()).or_default() += heard;
+        }
         self.last_time = now;
 
         if let Ok(e) = &mut self.engine {
@@ -1006,6 +1045,7 @@ impl App {
             recs: &self.recs,
             names: &names,
             removable,
+            suggested: false,
             playing: self.playing(),
             level: self.level,
             accent: self.aura.accent,
@@ -1297,6 +1337,8 @@ struct RowCtx<'a> {
     recs: &'a HashSet<String>,
     names: &'a [String],
     removable: bool,
+    /// Recommendations: the menu offers "Not interested" and "Don't recommend".
+    suggested: bool,
     playing: bool,
     level: f32,
     accent: Color32,
@@ -1356,6 +1398,15 @@ fn context_menu(resp: &egui::Response, i: usize, fav: bool, c: &RowCtx, act: &mu
         });
         if c.removable && ui.button(format!("{}  Remove", icon::X)).clicked() {
             *act = Some(RowAct::Remove(i));
+        }
+        if c.suggested {
+            ui.separator();
+            if ui.button(format!("{}  Not interested", icon::EYE_SLASH)).clicked() {
+                *act = Some(RowAct::Hide(i));
+            }
+            if ui.button(format!("{}  Don't recommend this artist", icon::PROHIBIT)).clicked() {
+                *act = Some(RowAct::HideArtist(i));
+            }
         }
     });
 }
@@ -1876,6 +1927,10 @@ impl App {
                 };
                 shelves.insert(shelves.len().min(1), jump_back);
             }
+            // feedback applies at once, before the next rebuild
+            for shelf in &mut shelves {
+                shelf.tracks.retain(|t| !self.lib.dismissed(t));
+            }
             for (n, shelf) in shelves.iter().enumerate().filter(|(_, s)| !s.tracks.is_empty()) {
                 self.shelf(ui, n, shelf);
             }
@@ -1905,6 +1960,7 @@ impl App {
             recs: &self.recs,
             names: &names,
             removable: false,
+            suggested: true,
             playing: self.playing(),
             level: self.level,
             accent: self.aura.accent,
@@ -1933,7 +1989,8 @@ impl App {
             tiles.push(Tile::Favorites);
         }
         tiles.extend(self.lib.playlists.iter().filter(|(_, v)| !v.is_empty()).map(|(k, _)| Tile::Playlist(k.clone())).take(3));
-        tiles.extend(self.lib.recent.iter().take(8 - tiles.len()).cloned().map(Tile::Track));
+        let room = 8 - tiles.len();
+        tiles.extend(self.lib.recent.iter().filter(|t| !self.lib.dismissed(t)).take(room).cloned().map(Tile::Track));
         if tiles.is_empty() {
             return;
         }
@@ -2271,6 +2328,20 @@ impl App {
                 Some(1) => self.install_update(),
                 Some(2) => self.restart(ui.ctx()),
                 _ => {}
+            }
+
+            group(ui, "Recommendations");
+            let fb = &self.lib.feedback;
+            let desc = format!("{} songs and {} artists hidden from Home, {} songs un-hearted", fb.hidden.len(), fb.hidden_artists.len(), fb.unliked.len());
+            let mut reset = false;
+            row(ui, "What you've hidden", &desc, |ui| {
+                reset = ui.button("Reset").clicked();
+            });
+            if reset {
+                self.lib.feedback = Default::default();
+                self.lib.save();
+                self.refresh_home();
+                self.toast("Recommendations reset");
             }
 
             group(ui, "Storage");
