@@ -3,6 +3,7 @@ mod audio;
 mod library;
 mod logo;
 mod mpris;
+mod recommend;
 mod sources;
 mod theme;
 mod tray;
@@ -78,12 +79,14 @@ enum Msg {
     Lyrics(String, Result<Lyrics, String>),
     Recs(Vec<Track>),
     RadioNow(u64, Option<String>),
+    Home(recommend::Home),
     UpdateChecked(bool, Result<Option<updater::Release>, String>),
     UpdateInstalled(Result<String, String>),
 }
 
 #[derive(Clone, PartialEq)]
 enum View {
+    Home,
     NowPlaying,
     Local,
     YouTube,
@@ -134,6 +137,7 @@ struct App {
     /// Song the current station is playing, from its stream metadata.
     radio_now: Option<String>,
     radio_polled: Option<Instant>,
+    home: recommend::Home,
     view_since: f64,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
@@ -214,11 +218,12 @@ impl App {
             engine,
             aura: viz::Aura::new(),
             level: 0.0,
-            view: View::NowPlaying,
+            view: View::Home,
             yt_fallback: false,
             prefetched: HashSet::new(),
             radio_now: None,
             radio_polled: None,
+            home: recommend::Home::load(),
             view_since: 0.0,
             tx,
             rx,
@@ -248,6 +253,9 @@ impl App {
         };
         app.scan();
         app.check_update(true);
+        if app.home.stale() {
+            app.refresh_home();
+        }
         // resume where you left off: last song loaded, paused
         if let Some(t) = app.lib.recent.first().cloned() {
             app.queue = vec![t.clone()];
@@ -380,6 +388,10 @@ impl App {
         self.radio_now = None;
         self.radio_polled = None;
         self.lib.played(&t);
+        // the starter page gives way to real picks once there's some listening to go on
+        if !self.home.seeded && self.lib.recent.iter().filter(|t| !t.is_radio()).count() >= 3 {
+            self.refresh_home();
+        }
         self.current = Some(t);
         self.fetch_lyrics();
         self.prefetch_next();
@@ -487,7 +499,7 @@ impl App {
                 self.qpos = i;
                 self.start();
             }
-            RowAct::Play(i) if matches!(self.view, View::YouTube | View::Radio | View::NowPlaying) => self.play_now(list[i].clone()),
+            RowAct::Play(i) if matches!(self.view, View::YouTube | View::Radio | View::NowPlaying) || list[i].is_radio() => self.play_now(list[i].clone()),
             RowAct::Play(i) => self.play_list(list.to_vec(), i),
             RowAct::Fav(i) => self.lib.toggle_fav(&list[i]),
             RowAct::Next(i) => {
@@ -580,6 +592,11 @@ impl App {
                         Ok(v) => Update::Ready(v),
                         Err(e) => Update::Failed(e),
                     };
+                }
+                Msg::Home(home) => {
+                    self.busy.remove("home");
+                    home.save();
+                    self.home = home;
                 }
                 Msg::RadioNow(generation, now) => {
                     self.busy.remove("icy");
@@ -700,6 +717,7 @@ impl App {
         let accent = self.aura.accent;
         let live = self.playing();
         for (ic, label, v) in [
+            (icon::HOUSE, "Home", View::Home),
             (icon::VINYL_RECORD, "Now playing", View::NowPlaying),
             (icon::YOUTUBE_LOGO, "YouTube", View::YouTube),
             (icon::RADIO, "Radio", View::Radio),
@@ -953,7 +971,7 @@ impl App {
             View::Radio => &self.radios,
             View::Favorites => &self.lib.favorites,
             View::Recent | View::NowPlaying => &self.lib.recent,
-            View::Settings => &self.queue[..0],
+            View::Settings | View::Home => &self.queue[..0],
             View::Queue => &self.queue,
             View::Playlist(n) => self.lib.playlists.get(n).map(Vec::as_slice).unwrap_or(&[]),
         }
@@ -1099,6 +1117,7 @@ impl App {
         ui.add_space((1.0 - a) * 10.0);
 
         match self.view.clone() {
+            View::Home => self.home_page(ui),
             View::NowPlaying => self.now_playing(ui),
             View::Settings => self.settings(ui),
             View::Local => {
@@ -1414,9 +1433,7 @@ fn card_grid(ui: &mut Ui, list: &[Track], c: &RowCtx, cache: &mut ArtCache, squa
     let mut act = None;
     let gap = 20.0;
     let width = ui.available_width() - 12.0;
-    let target = if square { 176.0 } else { 248.0 };
-    let cols = ((width + gap) / (target + gap)).floor().max(1.0) as usize;
-    let cw = (width - gap * (cols - 1) as f32) / cols as f32;
+    let (cols, cw) = card_columns(width, if square { 176.0 } else { 248.0 }, gap);
     let ih = if square { cw } else { cw * 9.0 / 16.0 };
     let ch = ih + 64.0;
     let rows = list.len().div_ceil(cols);
@@ -1426,49 +1443,67 @@ fn card_grid(ui: &mut Ui, list: &[Track], c: &RowCtx, cache: &mut ArtCache, squa
             for col in 0..cols {
                 let i = row * cols + col;
                 let Some(t) = list.get(i) else { break };
-                let card = Rect::from_min_size(band.min + vec2(col as f32 * (cw + gap), 0.0), vec2(cw, ch));
-                let resp = ui.interact(card, ui.id().with(("card", i)), Sense::click());
-                let hover = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.18);
-                let is_cur = c.is_current(i, t);
-                let img = Rect::from_min_size(card.min, vec2(cw, ih));
-                let p = ui.painter();
-                p.add(egui::Shadow { offset: [0, 8], blur: 24, spread: 0, color: black((40.0 + 40.0 * hover) as u8) }.as_shape(img, 14));
-                art_img(p, cache, t, img, 14);
-                if hover > 0.0 {
-                    p.rect_filled(img, 14, black((70.0 * hover) as u8));
-                    let btn = img.right_bottom() - vec2(30.0, 30.0) + vec2(0.0, 6.0 * (1.0 - hover));
-                    p.circle_filled(btn, 22.0, c.accent.gamma_multiply(hover));
-                    p.text(btn + vec2(1.0, 0.0), egui::Align2::CENTER_CENTER, icon::PLAY, FontId::proportional(18.0), INK.gamma_multiply(hover));
+                let rect = Rect::from_min_size(band.min + vec2(col as f32 * (cw + gap), 0.0), vec2(cw, ch));
+                if let Some(a) = card(ui, rect, ih, i, t, c, cache, "grid") {
+                    act = Some(a);
                 }
-                if is_cur {
-                    p.rect_stroke(img, 14, Stroke::new(2.0, c.accent), egui::StrokeKind::Inside);
-                    let tag = Rect::from_min_size(img.min + vec2(10.0, 10.0), vec2(28.0, 24.0));
-                    p.rect_filled(tag, 8, black(170));
-                    viz::eq(p, tag.center() + vec2(1.0, 0.0), ui.input(|i| i.time) as f32, c.level, c.playing, c.accent);
-                }
-                if let Some(d) = t.duration {
-                    let s = fmt_time(d);
-                    let tag = Rect::from_min_size(img.min + vec2(10.0, ih - 30.0), vec2(8.0 + 7.0 * s.len() as f32, 20.0));
-                    p.rect_filled(tag, 6, black(170));
-                    p.text(tag.center(), egui::Align2::CENTER_CENTER, s, FontId::monospace(11.0), TEXT);
-                }
-                let fav = c.lib.is_fav(t);
-                let heart = Rect::from_center_size(img.right_top() + vec2(-24.0, 24.0), Vec2::splat(32.0));
-                if fav || hover > 0.0 {
-                    let a = if fav { 1.0 } else { hover };
-                    p.circle_filled(heart.center(), 16.0, black((150.0 * a) as u8));
-                    heart_icon(p, heart.center(), 16.0, fav, TEXT.gamma_multiply(a));
-                }
-                text(p, img.left_bottom() + vec2(2.0, 12.0), &t.title, 15.0, if is_cur { c.accent } else { TEXT }, cw - 4.0, semibold());
-                text(p, img.left_bottom() + vec2(2.0, 33.0), &t.artist, 13.0, TEXT2, cw - 4.0, FontFamily::Proportional);
-                if resp.clicked() {
-                    let at = resp.interact_pointer_pos().unwrap_or_default();
-                    act = Some(if heart.contains(at) { RowAct::Fav(i) } else { RowAct::Play(i) });
-                }
-                context_menu(&resp, i, fav, c, &mut act);
             }
         }
     });
+    act
+}
+
+/// How many cards of about `target` width fit, and their exact width.
+fn card_columns(width: f32, target: f32, gap: f32) -> (usize, f32) {
+    let cols = ((width + gap) / (target + gap)).floor().max(1.0) as usize;
+    (cols, (width - gap * (cols - 1) as f32) / cols as f32)
+}
+
+/// One artwork card: image of height `ih`, title and artist under it. `salt` keeps cards with the
+/// same index in different shelves apart.
+#[allow(clippy::too_many_arguments)]
+fn card(ui: &mut Ui, card: Rect, ih: f32, i: usize, t: &Track, c: &RowCtx, cache: &mut ArtCache, salt: &str) -> Option<RowAct> {
+    let mut act = None;
+    let cw = card.width();
+    let resp = ui.interact(card, ui.id().with(("card", salt, i)), Sense::click());
+    let hover = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.18);
+    let is_cur = c.is_current(i, t);
+    let img = Rect::from_min_size(card.min, vec2(cw, ih));
+    let p = ui.painter();
+    p.add(egui::Shadow { offset: [0, 8], blur: 24, spread: 0, color: black((40.0 + 40.0 * hover) as u8) }.as_shape(img, 14));
+    art_img(p, cache, t, img, 14);
+    if hover > 0.0 {
+        p.rect_filled(img, 14, black((70.0 * hover) as u8));
+        let btn = img.right_bottom() - vec2(30.0, 30.0) + vec2(0.0, 6.0 * (1.0 - hover));
+        p.circle_filled(btn, 22.0, c.accent.gamma_multiply(hover));
+        p.text(btn + vec2(1.0, 0.0), egui::Align2::CENTER_CENTER, icon::PLAY, FontId::proportional(18.0), INK.gamma_multiply(hover));
+    }
+    if is_cur {
+        p.rect_stroke(img, 14, Stroke::new(2.0, c.accent), egui::StrokeKind::Inside);
+        let tag = Rect::from_min_size(img.min + vec2(10.0, 10.0), vec2(28.0, 24.0));
+        p.rect_filled(tag, 8, black(170));
+        viz::eq(p, tag.center() + vec2(1.0, 0.0), ui.input(|i| i.time) as f32, c.level, c.playing, c.accent);
+    }
+    if let Some(d) = t.duration {
+        let s = fmt_time(d);
+        let tag = Rect::from_min_size(img.min + vec2(10.0, ih - 30.0), vec2(8.0 + 7.0 * s.len() as f32, 20.0));
+        p.rect_filled(tag, 6, black(170));
+        p.text(tag.center(), egui::Align2::CENTER_CENTER, s, FontId::monospace(11.0), TEXT);
+    }
+    let fav = c.lib.is_fav(t);
+    let heart = Rect::from_center_size(img.right_top() + vec2(-24.0, 24.0), Vec2::splat(32.0));
+    if fav || hover > 0.0 {
+        let a = if fav { 1.0 } else { hover };
+        p.circle_filled(heart.center(), 16.0, black((150.0 * a) as u8));
+        heart_icon(p, heart.center(), 16.0, fav, TEXT.gamma_multiply(a));
+    }
+    text(p, img.left_bottom() + vec2(2.0, 12.0), &t.title, 15.0, if is_cur { c.accent } else { TEXT }, cw - 4.0, semibold());
+    text(p, img.left_bottom() + vec2(2.0, 33.0), &t.artist, 13.0, TEXT2, cw - 4.0, FontFamily::Proportional);
+    if resp.clicked() {
+        let at = resp.interact_pointer_pos().unwrap_or_default();
+        act = Some(if heart.contains(at) { RowAct::Fav(i) } else { RowAct::Play(i) });
+    }
+    context_menu(&resp, i, fav, c, &mut act);
     act
 }
 
@@ -1800,6 +1835,165 @@ impl App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             Err(e) => self.update = Update::Failed(format!("Couldn't restart: {e}")),
+        }
+    }
+
+    fn refresh_home(&mut self) {
+        if !self.busy.contains("home") {
+            let taste = recommend::taste(&self.lib);
+            self.spawn("home", move || Msg::Home(recommend::build(taste)));
+        }
+    }
+
+    fn home_page(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                let meta = if self.busy.contains("home") {
+                    "Finding new music for you".to_string()
+                } else {
+                    format!("Picked from what you play · {}", self.home.age())
+                };
+                self.header(ui, "Home", &meta);
+            });
+            ui.with_layout(egui::Layout::right_to_left(Align::Min), |ui| {
+                ui.add_space(8.0);
+                if self.busy.contains("home") {
+                    ui.spinner();
+                } else if icon_btn(ui, icon::ARROWS_CLOCKWISE, None, 36.0).on_hover_text("Find new picks").clicked() {
+                    self.refresh_home();
+                }
+            });
+        });
+        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            self.quick_tiles(ui);
+            let mut shelves = self.home.shelves.clone();
+            if !self.lib.recent.is_empty() {
+                // live, not cached: always your latest plays, right after the top picks
+                let jump_back = recommend::Shelf {
+                    title: "Jump back in".into(),
+                    subtitle: "What you played lately".into(),
+                    tracks: self.lib.recent.iter().take(12).cloned().collect(),
+                };
+                shelves.insert(shelves.len().min(1), jump_back);
+            }
+            for (n, shelf) in shelves.iter().enumerate().filter(|(_, s)| !s.tracks.is_empty()) {
+                self.shelf(ui, n, shelf);
+            }
+            if self.home.shelves.is_empty() && self.busy.contains("home") {
+                ui.add_space(24.0);
+                ui.label(RichText::new("Finding new music for you").font(FontId::new(24.0, serif())).color(MUTED));
+            }
+            ui.add_space(24.0);
+        });
+    }
+
+    /// One row of cards under a title, as many as fit the width.
+    fn shelf(&mut self, ui: &mut Ui, n: usize, shelf: &recommend::Shelf) {
+        ui.add_space(28.0);
+        ui.label(RichText::new(&shelf.title).font(FontId::new(30.0, serif())).color(TEXT));
+        ui.label(RichText::new(&shelf.subtitle).size(13.0).color(TEXT2));
+        ui.add_space(12.0);
+        let gap = 20.0;
+        let width = ui.available_width() - 12.0;
+        let (cols, cw) = card_columns(width, 176.0, gap);
+        let (band, _) = ui.allocate_exact_size(vec2(width, cw + 64.0), Sense::hover());
+        let names: Vec<String> = self.lib.playlists.keys().cloned().collect();
+        let row = RowCtx {
+            lib: &self.lib,
+            current: self.current.as_ref(),
+            playing_idx: None,
+            recs: &self.recs,
+            names: &names,
+            removable: false,
+            playing: self.playing(),
+            level: self.level,
+            accent: self.aura.accent,
+        };
+        let mut act = None;
+        for (i, t) in shelf.tracks.iter().take(cols).enumerate() {
+            let rect = Rect::from_min_size(band.min + vec2(i as f32 * (cw + gap), 0.0), vec2(cw, cw + 64.0));
+            if let Some(a) = card(ui, rect, cw, i, t, &row, &mut self.art, &format!("shelf{n}")) {
+                act = Some(a);
+            }
+        }
+        if let Some(a) = act {
+            self.apply(a, &shelf.tracks);
+        }
+    }
+
+    /// Spotify-style quick picks: favorites, playlists and recent plays as wide tiles.
+    fn quick_tiles(&mut self, ui: &mut Ui) {
+        enum Tile {
+            Favorites,
+            Playlist(String),
+            Track(Track),
+        }
+        let mut tiles = vec![];
+        if !self.lib.favorites.is_empty() {
+            tiles.push(Tile::Favorites);
+        }
+        tiles.extend(self.lib.playlists.iter().filter(|(_, v)| !v.is_empty()).map(|(k, _)| Tile::Playlist(k.clone())).take(3));
+        tiles.extend(self.lib.recent.iter().take(8 - tiles.len()).cloned().map(Tile::Track));
+        if tiles.is_empty() {
+            return;
+        }
+        ui.add_space(8.0);
+        let gap = 12.0;
+        let width = ui.available_width() - 12.0;
+        let cols = if width > 760.0 { 4 } else { 2 };
+        let tw = (width - gap * (cols - 1) as f32) / cols as f32;
+        let th = 64.0;
+        let rows = tiles.len().div_ceil(cols);
+        let (area, _) = ui.allocate_exact_size(vec2(width, rows as f32 * (th + gap)), Sense::hover());
+        let mut go: Option<(&Tile, bool)> = None;
+        for (i, tile) in tiles.iter().enumerate() {
+            let r = Rect::from_min_size(area.min + vec2((i % cols) as f32 * (tw + gap), (i / cols) as f32 * (th + gap)), vec2(tw, th));
+            let resp = ui.interact(r, ui.id().with(("tile", i)), Sense::click());
+            let h = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.15);
+            let art = Rect::from_min_size(r.min, Vec2::splat(th));
+            let p = ui.painter();
+            p.rect_filled(r, 10, white((18.0 + 14.0 * h) as u8));
+            let label = match tile {
+                Tile::Favorites => {
+                    p.rect_filled(art, egui::CornerRadius { nw: 10, sw: 10, ne: 0, se: 0 }, Color32::from_rgb(120, 22, 48));
+                    p.text(art.center(), egui::Align2::CENTER_CENTER, egui_phosphor::fill::HEART, FontId::new(26.0, filled()), TEXT);
+                    "Favorites".to_string()
+                }
+                Tile::Playlist(name) => {
+                    match self.lib.playlists.get(name).and_then(|v| v.first()) {
+                        Some(first) => art_img(p, &mut self.art, first, art, 10),
+                        None => viz::fallback_cover(p, art, name, name, 10),
+                    }
+                    name.clone()
+                }
+                Tile::Track(t) => {
+                    art_img(p, &mut self.art, t, art, 10);
+                    t.title.clone()
+                }
+            };
+            text(p, r.left_center() + vec2(th + 14.0, -10.0), &label, 15.0, TEXT, tw - th - 70.0, semibold());
+            let btn = r.right_center() - vec2(30.0, 0.0);
+            if h > 0.0 {
+                p.circle_filled(btn, 18.0, self.aura.accent.gamma_multiply(h));
+                p.text(btn + vec2(1.0, 0.0), egui::Align2::CENTER_CENTER, icon::PLAY, FontId::proportional(16.0), INK.gamma_multiply(h));
+            }
+            if resp.clicked() {
+                let on_play = resp.interact_pointer_pos().is_some_and(|at| at.distance(btn) < 20.0);
+                go = Some((tile, on_play));
+            }
+        }
+        // the play button plays; the rest of a tile opens it, like Spotify
+        match go {
+            Some((Tile::Favorites, true)) => self.play_list(self.lib.favorites.clone(), 0),
+            Some((Tile::Favorites, false)) => self.set_view(View::Favorites),
+            Some((Tile::Playlist(name), true)) => {
+                if let Some(list) = self.lib.playlists.get(name).cloned() {
+                    self.play_list(list, 0);
+                }
+            }
+            Some((Tile::Playlist(name), false)) => self.set_view(View::Playlist(name.clone())),
+            Some((Tile::Track(t), _)) => self.play_now(t.clone()),
+            None => {}
         }
     }
 

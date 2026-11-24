@@ -53,7 +53,17 @@ fn shellexpand(dir: &str) -> String {
 /// Search YouTube, or list a pasted video/playlist URL.
 pub fn youtube_search(query: &str, n: usize) -> Result<Vec<Track>, String> {
     let target = if query.starts_with("http") { query.to_string() } else { format!("ytsearch{n}:{query}") };
-    let out = Command::new("yt-dlp").args(["--flat-playlist", "-j", "--no-warnings", &target]).output().map_err(|e| format!("yt-dlp not found: {e}"))?;
+    yt_flat(&[&target])
+}
+
+/// YouTube's own Mix for a video: the songs YouTube would play after it. Mixes never end, so
+/// only the first `n` are listed.
+pub fn youtube_mix(id: &str, n: usize) -> Result<Vec<Track>, String> {
+    yt_flat(&["-I", &format!("1:{n}"), &format!("https://www.youtube.com/watch?v={id}&list=RD{id}")])
+}
+
+fn yt_flat(args: &[&str]) -> Result<Vec<Track>, String> {
+    let out = Command::new("yt-dlp").args(["--flat-playlist", "-j", "--no-warnings"]).args(args).output().map_err(|e| format!("yt-dlp not found: {e}"))?;
     if !out.status.success() && out.stdout.is_empty() {
         return Err(String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("YouTube search failed").to_string());
     }
