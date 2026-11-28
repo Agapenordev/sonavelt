@@ -58,7 +58,7 @@ one matters to you, open an issue or add a thumbs-up to an existing one. Want to
 
 - **Windows.** Builds and in-app updates for Windows 10 and 11.
 
-## Coming in 0.5.1
+## Shipped in 0.5.1
 
 - **Windows tray and close to tray**, an icon for the .exe, and a title bar colored like the app.
 - **Better picks.** From YouTube Music radio; no other uploads of songs you know; mostly new artists.
