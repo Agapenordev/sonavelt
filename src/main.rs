@@ -68,6 +68,8 @@ struct Window<'a>(&'a mut App);
 impl eframe::App for Window<'_> {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         eframe::App::logic(self.0, ctx, frame);
+        #[cfg(windows)]
+        self.0.color_title_bar(frame);
     }
     fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         eframe::App::ui(self.0, ui, frame);
@@ -165,6 +167,9 @@ struct App {
     radio_query: String,
     filter: String,
     new_playlist: String,
+    /// The New playlist button was clicked: its name field shows in its place. `Some(true)` on
+    /// the first frame, to put the cursor in it.
+    naming: Option<bool>,
     queue: Vec<Track>,
     qpos: usize,
     current: Option<Track>,
@@ -187,6 +192,9 @@ struct App {
     mpris: Option<mpris::Mpris>,
     tray_rx: Receiver<tray::TrayCmd>,
     tray_state: (String, bool),
+    /// The color last given to the Windows title bar.
+    #[cfg(windows)]
+    title_color: Option<Color32>,
     quitting: bool,
     picker: Option<String>,
     pick_query: String,
@@ -229,6 +237,8 @@ impl App {
             mpris,
             tray_rx,
             tray_state: (String::new(), false),
+            #[cfg(windows)]
+            title_color: None,
             quitting: false,
             picker: None,
             pick_query: String::new(),
@@ -262,6 +272,7 @@ impl App {
             radio_query: String::new(),
             filter: String::new(),
             new_playlist: String::new(),
+            naming: None,
             queue: vec![],
             qpos: 0,
             current: None,
@@ -924,21 +935,40 @@ impl App {
                     self.set_view(v);
                 }
             }
+            self.new_playlist_button(ui);
         });
         ui.with_layout(egui::Layout::bottom_up(Align::Min), |ui| {
             let dot = matches!(self.update, Update::Available(_) | Update::Ready(_)).then_some(self.aura.accent);
             if nav_item(ui, icon::GEAR_SIX, "Settings", None, self.view == View::Settings, dot) {
                 self.set_view(View::Settings);
             }
-            ui.add_space(8.0);
-            let r = ui.add(input(&mut self.new_playlist, &format!("{}  New playlist", icon::PLUS), f32::INFINITY, 14.0));
-            if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && !self.new_playlist.trim().is_empty() {
-                let name = std::mem::take(&mut self.new_playlist).trim().to_string();
+        });
+    }
+
+    /// A button at the end of the playlists that turns into a name field: Enter creates the
+    /// playlist and opens it, Esc or an empty name cancels.
+    fn new_playlist_button(&mut self, ui: &mut Ui) {
+        let Some(first) = self.naming else {
+            if nav_item(ui, icon::PLUS, "New playlist", None, false, None) {
+                self.naming = Some(true);
+            }
+            return;
+        };
+        ui.add_space(2.0);
+        let r = ui.add(input(&mut self.new_playlist, "Name it, then press Enter", f32::INFINITY, 14.0));
+        if first {
+            r.request_focus();
+            self.naming = Some(false);
+        }
+        if r.lost_focus() {
+            let name = std::mem::take(&mut self.new_playlist).trim().to_string();
+            self.naming = None;
+            if !name.is_empty() && !ui.input(|i| i.key_pressed(Key::Escape)) {
                 self.lib.playlists.entry(name.clone()).or_default();
                 self.lib.save();
                 self.set_view(View::Playlist(name));
             }
-        });
+        }
     }
 
     fn dock(&mut self, ui: &mut Ui) {
@@ -2406,6 +2436,10 @@ impl App {
         self.logo = logo_texture(&self.ctx);
         self.view_since = 0.0;
         self.last_time = 0.0;
+        #[cfg(windows)]
+        {
+            self.title_color = None; // a new window has the default title bar
+        }
         if let Some(h) = &self.tray {
             let ctx = self.ctx.clone();
             h.update(|t| t.ctx = ctx);
@@ -2413,6 +2447,36 @@ impl App {
         if let Some(m) = &self.mpris {
             m.set_ctx(&self.ctx);
         }
+    }
+
+    /// Windows 11 draws the title bar in a color the app picks: follow the top of the background
+    /// so the bar and the app read as one surface. Windows 10 keeps a plain dark bar.
+    #[cfg(windows)]
+    fn color_title_bar(&mut self, frame: &eframe::Frame) {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        use windows_sys::Win32::Graphics::Dwm::{
+            DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute,
+        };
+        let s = &self.lib.settings;
+        let c = match s.background {
+            Background::Solid => INK,
+            _ => self.aura.top(s.brightness),
+        };
+        // the aura eases between songs: repaint the bar only when the change is visible
+        if self.title_color.is_some_and(|old| (0..3).all(|i| old.to_array()[i].abs_diff(c.to_array()[i]) < 3)) {
+            return;
+        }
+        let Ok(handle) = frame.window_handle() else { return };
+        let RawWindowHandle::Win32(w) = handle.as_raw() else { return };
+        let hwnd = w.hwnd.get() as windows_sys::Win32::Foundation::HWND;
+        let colorref = |c: Color32| c.r() as u32 | (c.g() as u32) << 8 | (c.b() as u32) << 16;
+        for (attr, value) in
+            [(DWMWA_USE_IMMERSIVE_DARK_MODE, 1), (DWMWA_CAPTION_COLOR, colorref(c)), (DWMWA_BORDER_COLOR, colorref(c)), (DWMWA_TEXT_COLOR, colorref(TEXT))]
+        {
+            // SAFETY: hwnd is this window's live handle; each attribute takes one 4-byte value
+            unsafe { DwmSetWindowAttribute(hwnd, attr as u32, (&value as *const u32).cast(), 4) };
+        }
+        self.title_color = Some(c);
     }
 
     /// Runs while the window is closed: keeps the queue moving and answers the tray.
@@ -2436,7 +2500,10 @@ impl App {
             tray::TrayCmd::Next => self.next(false),
             tray::TrayCmd::Prev => self.prev(),
             tray::TrayCmd::SeekTo(t) => self.seek(t),
-            tray::TrayCmd::Show => self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus),
+            tray::TrayCmd::Show => {
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
             tray::TrayCmd::Quit => {
                 self.quitting = true;
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Close);

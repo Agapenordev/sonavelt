@@ -25,6 +25,16 @@ walkdir = "2"
 ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 
+# the tray, and a title bar colored like the app (Windows 11)
+[target.'cfg(windows)'.dependencies]
+tray-icon = { version = "0.27", default-features = false }
+raw-window-handle = "0.6"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_UI_WindowsAndMessaging"] }
+
+# the .exe's own icon, for Explorer, the desktop and the taskbar
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

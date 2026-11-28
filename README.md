@@ -106,7 +106,7 @@ Sonavelt updates itself: when a new version is out, update from Settings in one 
 - Favorites, playlists, queue, history, Smart Shuffle, M3U export, YouTube playlist import.
 - Even out loudness, equalizer presets, lyrics timing nudge.
 - Aura, blurred cover or solid background, color moods, interface size, sleep timer.
-- Linux: system tray, close to tray, media keys and lock screen controls (MPRIS).
+- System tray and close to tray. On Linux, also media keys and lock screen controls (MPRIS).
 
 </details>
 

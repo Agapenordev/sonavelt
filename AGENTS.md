@@ -39,9 +39,10 @@ run them when you touch `audio.rs`, `sources.rs` or `updater.rs`.
 | `src/viz.rs` | Aura and blurred-cover backgrounds, palettes, the playing equalizer, fallback covers |
 | `src/theme.rs` | Colors and font families. All UI colors come from here |
 | `src/logo.rs` | The logo, drawn from distance fields at any size |
-| `src/tray.rs` | StatusNotifierItem tray (ksni, Linux only); `TrayCmd` is also the command channel for MPRIS |
+| `src/tray.rs` | Tray: StatusNotifierItem (ksni) on Linux, tray-icon on its own message thread on Windows; `TrayCmd` is also the command channel for MPRIS |
 | `src/mpris.rs` | MPRIS media controls over D-Bus (zbus, Linux only): media keys, lock screen, desktop widgets |
 | `src/updater.rs` | GitHub release check, download, validation and swap |
+| `build.rs` | Writes the Windows .exe icon from `logo.rs` and embeds it (winresource) |
 
 ## Rules that keep this codebase working
 
@@ -66,8 +67,10 @@ run them when you touch `audio.rs`, `sources.rs` or `updater.rs`.
 - Only complete downloads become cache files (`*.part` is renamed on success).
 
 **Windows**
-- CI builds and tests on Windows too. Linux-only code (tray, MPRIS, the desktop entry) sits behind
-  `#[cfg(target_os = "linux")]` with a do-nothing stub for other systems, so `main.rs` stays free of cfgs.
+- CI builds and tests on Windows too. Platform code sits behind `#[cfg(...)]` in its own module, with
+  a do-nothing stub elsewhere, so `main.rs` stays almost free of cfgs. MPRIS and the desktop entry are
+  Linux-only; the tray exists on both.
+- On Windows 11 the title bar takes the color of the top of the background (`color_title_bar`).
 - Start ffmpeg and yt-dlp with `sources::tool()`, never `Command::new`: it keeps a console window
   from flashing up on Windows.
 - Paths come from `dirs`; never hard-code `~/.config` or `/`.

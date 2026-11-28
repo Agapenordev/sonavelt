@@ -54,10 +54,16 @@ one matters to you, open an issue or add a thumbs-up to an existing one. Want to
 - **Heard on radio.** Every song your stations played while you listened, to play or heart.
 - **Private session**, and **why this pick?** on every recommendation.
 
-## Coming in 0.5
+## Shipped in 0.5
 
-- **Windows.** Builds and in-app updates for Windows 10 and 11. The tray and media keys are
-  Linux-only for now.
+- **Windows.** Builds and in-app updates for Windows 10 and 11.
+
+## Coming in 0.5.1
+
+- **Windows tray and close to tray**, an icon for the .exe, and a title bar colored like the app.
+- **Better picks.** From YouTube Music radio; no other uploads of songs you know; mostly new artists.
+- **YouTube songs start in about half a second** when the pointer rested on them first.
+- **Home finds new picks** each time you open it, and lyrics find the right song more often.
 
 ## Next
 
@@ -68,7 +74,7 @@ one matters to you, open an issue or add a thumbs-up to an existing one. Want to
 
 - **Gapless playback and crossfade** between songs.
 - **Light theme.**
-- **Media keys and tray on Windows** (System Media Transport Controls).
+- **Media keys on Windows** (System Media Transport Controls).
 
 ## Maybe someday
 

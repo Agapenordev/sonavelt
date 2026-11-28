@@ -44,6 +44,13 @@ impl Aura {
         self.accent = (Rgba::from(self.accent) * (1.0 - k) + Rgba::from(accent) * k).into();
     }
 
+    /// About the color along the top edge, where the window's title bar sits.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn top(&self, gain: f32) -> Color32 {
+        let c = (self.cur[0] + self.cur[1] + self.cur[2] + self.cur[3]) * (gain / 4.0);
+        Rgba::from_rgb(c.r(), c.g(), c.b()).into()
+    }
+
     /// `t` drives the drift (pass a constant to freeze it), `gain` is the overall brightness.
     pub fn paint(&self, p: &Painter, r: Rect, t: f32, gain: f32) {
         let sample = |u: f32, v: f32| -> Rgba {
