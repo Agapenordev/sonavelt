@@ -6,7 +6,7 @@ with more context.
 
 ## The project
 
-Sonavelt is a native Linux music player in Rust: YouTube (through `yt-dlp`), internet radio
+Sonavelt is a native music player for Linux and Windows, in Rust: YouTube (through `yt-dlp`), internet radio
 (radio-browser.info) and local files, with synced lyrics (LRCLIB). The UI is immediate-mode
 [egui](https://github.com/emilk/egui) 0.36 on eframe with the OpenGL (`glow`) backend. Audio is
 decoded by an `ffmpeg` child process and played through `cpal`.
@@ -39,8 +39,8 @@ run them when you touch `audio.rs`, `sources.rs` or `updater.rs`.
 | `src/viz.rs` | Aura and blurred-cover backgrounds, palettes, the playing equalizer, fallback covers |
 | `src/theme.rs` | Colors and font families. All UI colors come from here |
 | `src/logo.rs` | The logo, drawn from distance fields at any size |
-| `src/tray.rs` | StatusNotifierItem tray (ksni); `TrayCmd` is also the command channel for MPRIS |
-| `src/mpris.rs` | MPRIS media controls over D-Bus (zbus): media keys, lock screen, desktop widgets |
+| `src/tray.rs` | StatusNotifierItem tray (ksni, Linux only); `TrayCmd` is also the command channel for MPRIS |
+| `src/mpris.rs` | MPRIS media controls over D-Bus (zbus, Linux only): media keys, lock screen, desktop widgets |
 | `src/updater.rs` | GitHub release check, download, validation and swap |
 
 ## Rules that keep this codebase working
@@ -65,10 +65,17 @@ run them when you touch `audio.rs`, `sources.rs` or `updater.rs`.
   leave fragment files behind otherwise.
 - Only complete downloads become cache files (`*.part` is renamed on success).
 
+**Windows**
+- CI builds and tests on Windows too. Linux-only code (tray, MPRIS, the desktop entry) sits behind
+  `#[cfg(target_os = "linux")]` with a do-nothing stub for other systems, so `main.rs` stays free of cfgs.
+- Start ffmpeg and yt-dlp with `sources::tool()`, never `Command::new`: it keeps a console window
+  from flashing up on Windows.
+- Paths come from `dirs`; never hard-code `~/.config` or `/`.
+
 **Data and compatibility**
 - `Library` and `Settings` use `#[serde(default)]`. New fields need a default so existing
   libraries keep loading. Never rename or remove a saved field without a migration.
-- `updater::REPO` and `updater::ASSET` are what every installed copy looks for. Changing them
+- `updater::REPO` and `updater::ASSET` (one per platform) are what every installed copy looks for. Changing them
   breaks updates for everyone already installed.
 
 **Dependencies**
@@ -111,6 +118,8 @@ tests, builds on Ubuntu 22.04 (glibc 2.35, so the binary runs on older distros t
 - `sonavelt-X.Y.Z-x86_64-linux.tar.gz` (binary, README, LICENSE, icon)
 - `sonavelt-x86_64-linux` (the bare binary: the in-app updater downloads exactly this name)
 - `SHA256SUMS`
+- `sonavelt-X.Y.Z-x86_64-windows.zip`, `sonavelt-x86_64-windows.exe` and `SHA256SUMS-windows`, from a
+  Windows job that runs after the Linux one and adds them to the same release
 
 Installed copies offer the update on their next launch. A push that doesn't change the version
 does nothing. To check a build without publishing, run the workflow by hand from the Actions tab
@@ -123,4 +132,4 @@ Don't create releases by hand: the workflow is the one place asset names and bui
 - Commit `target/`, caches, or anything from `~/.config/sonavelt` / `~/.cache/sonavelt`.
 - Put personal listening data in screenshots, tests or fixtures.
 - Add telemetry, accounts or any server Sonavelt depends on (see ROADMAP "Not planned").
-- Weaken the updater's checks: it must stay HTTPS-only, ELF-validated and atomically renamed.
+- Weaken the updater's checks: it must stay HTTPS-only, header-validated (ELF or `MZ`) and swapped by rename.

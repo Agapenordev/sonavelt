@@ -4,146 +4,114 @@
 
 # Sonavelt
 
-**A fast, native music player for Linux.**
-YouTube, internet radio and your own files in one place, with synced lyrics. Written in Rust.
+**One music player for YouTube, internet radio and your own files.**
+Free, no account, no ads. For Linux and Windows.
 
-[![Release](https://img.shields.io/badge/release-latest-b0264a)](https://github.com/Agapenordev/sonavelt/releases/latest)
+[**Download**](https://github.com/Agapenordev/sonavelt/releases/latest) ·
+[Install](#install) ·
+[Roadmap](ROADMAP.md)
+
 [![CI](https://github.com/Agapenordev/sonavelt/actions/workflows/ci.yml/badge.svg)](https://github.com/Agapenordev/sonavelt/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-f8ead6)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-Linux-5c0f2a)
-![Rust](https://img.shields.io/badge/made%20with-Rust-b0264a)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-5c0f2a)
 
-<img src="docs/home.png" alt="Sonavelt's Home page: quick tiles for favorites and playlists, then a Made for you shelf of album-art cards">
+<img src="docs/home.png" alt="Sonavelt's Home page: quick tiles for favorites and playlists, then shelves of picks with album art">
 
 </div>
 
-## What makes it different
+## What it does
 
-Every song re-themes the whole app. Sonavelt reads the colors of the cover art and turns them
-into a slow, living background (the *aura*) that breathes with the beat. The accent color,
-the progress bar and the hearts all follow along. Songs with lyrics show them line by line, big
-and in sync. Songs without them fill the space with the title in huge sliding letters, like a
-gig poster.
-
-It is also built to be light: it uses about 130 MB of RAM, idles at around 2% of one CPU core,
-and starts YouTube songs in about two seconds.
-
-## Features
-
-**A home page that knows your taste**
-- Like Spotify's: quick tiles for your favorites, playlists and recent plays, then shelves of
-  picks. *Made for you*, *More like* the artists you play most, *Jump back in* and *Stations*.
-- Picks work like YouTube's home feed: your listening splits into interests (the songs you
-  play, and the genres of your stations, weighted by listening time), each seeded from songs you
-  love or songs your stations played, and filled from YouTube's own Mixes.
-- It learns from you: skips, un-hearted songs, *Not interested*, *Don't recommend this artist*,
-  and picks you keep passing over all push things down. Only real listening counts: a song you
-  test for a few seconds teaches nothing.
-- **Block whole genres** (phonk, trap, anything): they're never recommended and drop out of radio
-  lists. Most players can't do this at all.
-- **Why this pick?** Hover a pick to see what it came from: "Because you play Runaway".
-- **Private session:** listen without anything being remembered.
-
-**Listen to anything**
-- **YouTube:** search for any song, mix or live set, or paste a video or playlist link. Songs
-  start in about 2 seconds while they download, then replay instantly from the cache.
-- **Internet radio:** hand-picked stations (SomaFM, Radio Paradise, FIP, KEXP, NTS, Nightride FM,
-  Jazz24, BBC Radio 1), the most-loved stations worldwide, 14 genres and search by name, all from
-  [radio-browser.info](https://www.radio-browser.info).
-- **Your files:** point it at a folder of MP3, FLAC, OGG, Opus, M4A or WAV files. Embedded cover
-  art is picked up automatically.
-
-**Keep what you love**
-- Favorites, playlists (with an *Add songs* picker), a queue with *Play next*, and recently played.
-- **Smart Shuffle** leans toward your favorites and most-played songs, keeps songs you just heard
-  out of the way, avoids the same artist twice in a row, and mixes in recommendations.
-- The next YouTube song downloads in the background, so skipping is instant.
-
-**Plays well with your desktop**
-- Media keys, the lock screen and desktop media widgets control Sonavelt and show the current song
-  with its artwork (MPRIS).
-- Radio stations show the song they're playing, with a button to find it on YouTube, and
-  **Heard on radio** keeps every song your stations played while you listened, to play or heart.
-- Local files use their real tags for title, artist and length.
-
-**Lyrics**
-- Time-synced lyrics from [LRCLIB](https://lrclib.net). The current line lights up and scrolls
-  into place. Click any line to jump there.
-
-**Make it yours**
-- Background: *Aura*, *Blurred cover* or *Solid*.
-- Colors from the artwork, or a fixed mood: Midnight, Ember, Forest, Rose, Mono.
-- Brightness, moving background, beat reaction and interface size (90 to 125%).
-- Sleep timer, keyboard shortcuts and a system tray with playback controls.
-- **Close to tray:** close the window and the music keeps playing. Bring it back from the tray.
-- **Built-in updates:** when a new release is out, update from Settings in one click.
-
-## Screenshots
-
-<div align="center">
-<img src="docs/now-playing.png" alt="Now playing SomaFM Groove Salad, with the song on air and the title sliding in large letters">
-</div>
-
-| Radio | YouTube |
+| | |
 |---|---|
-| <img src="docs/radio.png" alt="Radio page with a grid of station logos and genre filters"> | <img src="docs/youtube.png" alt="YouTube search results as a grid of thumbnails"> |
+| **Play anything** | Search YouTube, tune into thousands of radio stations, or open a folder of your own music. |
+| **Picks for you** | A home page that learns your taste from what you actually listen to. No account needed. |
+| **Synced lyrics** | Lyrics scroll along with the song, line by line. |
+| **Looks like the music** | The whole app takes its colors from the cover of the song that's playing. |
+| **Light** | About 130 MB of RAM. YouTube songs start in about two seconds. |
+| **Yours** | Favorites, playlists and history stay in one file on your computer. |
 
-<div align="center">
-<img src="docs/settings.png" width="80%" alt="Settings page with background, colors, brightness and interface size options">
-</div>
+<table>
+<tr>
+<td><img src="docs/lyrics.png" alt="Now playing with time-synced lyrics next to the cover"></td>
+<td><img src="docs/radio.png" alt="Radio page with a grid of station logos and genre filters"></td>
+</tr>
+<tr>
+<td align="center">Synced lyrics</td>
+<td align="center">Internet radio</td>
+</tr>
+<tr>
+<td><img src="docs/now-playing.png" alt="A radio station playing, with the song on air in large letters"></td>
+<td><img src="docs/heard.png" alt="Heard on radio: a list of songs your stations played"></td>
+</tr>
+<tr>
+<td align="center">Now playing</td>
+<td align="center">Songs heard on your stations</td>
+</tr>
+</table>
 
 ## Install
 
-### 1. Install what Sonavelt plays music through
+Sonavelt plays music through two free tools: **ffmpeg** and **yt-dlp** (plus **deno**, which
+yt-dlp needs for YouTube). Install them first, then download Sonavelt from
+[Releases](https://github.com/Agapenordev/sonavelt/releases/latest).
 
-| Tool | Why |
-|---|---|
-| [`ffmpeg`](https://ffmpeg.org) | Decodes all audio |
-| [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) | YouTube search and downloads (keep it up to date) |
-| [`deno`](https://deno.com) or Node.js | Needed by yt-dlp for YouTube |
-| ALSA (`libasound`) | Sound output, already present on nearly every Linux system |
+### Windows
+
+```powershell
+winget install Gyan.FFmpeg yt-dlp.yt-dlp DenoLand.Deno
+```
+
+Download `sonavelt-…-x86_64-windows.zip`, unzip it into a folder you own (for example
+`Documents\Sonavelt`) and run `sonavelt.exe`.
+
+### Linux
 
 ```bash
 # Arch
 sudo pacman -S ffmpeg yt-dlp deno
 # Fedora
 sudo dnf install ffmpeg yt-dlp
-# Debian / Ubuntu (get a recent yt-dlp from its releases page or pipx)
-sudo apt install ffmpeg
 # openSUSE
 sudo zypper install ffmpeg yt-dlp
+# Debian / Ubuntu: get a recent yt-dlp from its releases page or pipx
+sudo apt install ffmpeg
 ```
-
-### 2. Get Sonavelt
-
-Download the latest build from [**Releases**](https://github.com/Agapenordev/sonavelt/releases/latest):
 
 ```bash
 tar xzf sonavelt-*-x86_64-linux.tar.gz
-cd sonavelt-*-x86_64-linux
-./sonavelt
+./sonavelt-*-x86_64-linux/sonavelt
 ```
 
-Release builds run on any x86_64 distro with glibc 2.35 or newer: Ubuntu 22.04, Debian 12,
-Fedora 36 and anything later. (The very first release, 0.1.0, needs glibc 2.44; update from it
-or build from source.)
+Runs on any x86_64 distro with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 and later).
+On first launch it adds itself to your app launcher.
 
-On first launch Sonavelt adds itself to your app launcher, with its icon. Put the folder somewhere
-you can write to (for example `~/.local/opt/sonavelt`), so in-app updates can replace the binary.
+Sonavelt updates itself: when a new version is out, update from Settings in one click.
 
-### Or build from source
+## More
 
-```bash
-git clone https://github.com/Agapenordev/sonavelt
-cd sonavelt
-cargo build --release
-./target/release/sonavelt
-```
+<details>
+<summary><b>All features</b></summary>
 
-You need a recent stable Rust toolchain and the ALSA development headers
-(`alsa-lib-devel`, `libasound2-dev` or `alsa-lib`, depending on your distro).
+- **Home:** quick tiles, *Made for you*, a shelf per artist you love, *Jump back in* and stations
+  for you. Hover a pick to see why it was chosen.
+- **It learns from real listening only.** A play counts after 30 seconds. Skips, *Not
+  interested* and *Don't recommend this artist* push things down. Block whole genres.
+- **Private session:** listen without anything being remembered.
+- **YouTube:** search, or paste a video or playlist link. Songs are cached for instant replay, and
+  the next one downloads in the background.
+- **Radio:** hand-picked stations, the most-loved worldwide, 14 genres and search, from
+  [radio-browser.info](https://www.radio-browser.info). Shows the song on air. Dead streams are
+  hidden.
+- **Your files:** MP3, FLAC, OGG, Opus, M4A and WAV, with their tags and cover art.
+- Favorites, playlists, queue, history, Smart Shuffle, M3U export, YouTube playlist import.
+- Even out loudness, equalizer presets, lyrics timing nudge.
+- Aura, blurred cover or solid background, color moods, interface size, sleep timer.
+- Linux: system tray, close to tray, media keys and lock screen controls (MPRIS).
 
-## Keyboard shortcuts
+</details>
+
+<details>
+<summary><b>Keyboard shortcuts</b></summary>
 
 | Key | Action |
 |---|---|
@@ -154,48 +122,50 @@ You need a recent stable Rust toolchain and the ALSA development headers
 | <kbd>L</kbd> | Lyrics |
 | <kbd>F</kbd> | Favorite the current song |
 
-## How it works
+</details>
 
-- **UI:** [egui](https://github.com/emilk/egui) on OpenGL. Everything is painted by hand: the aura
-  is a smoothly interpolated color mesh built from a 4×4 sample of the cover art.
-- **Audio:** `ffmpeg` decodes every source (files, radio streams, YouTube) to raw PCM, which plays
-  through [cpal](https://github.com/RustAudio/cpal).
-- **YouTube:** `yt-dlp` streams straight into the player while the full file saves to the cache,
-  using a YouTube client that skips the pre-roll wait.
-- **Artwork:** fetched in parallel, saved to a disk cache, and dropped from memory when it hasn't
-  been seen in a while.
-- **Tray:** the freedesktop StatusNotifierItem protocol, so it works with KDE, waybar, and other
-  bars that support it.
+<details>
+<summary><b>Build from source</b></summary>
 
-| Data | Location |
-|---|---|
-| Library, playlists, settings | `~/.config/sonavelt/library.json` |
-| YouTube downloads, artwork cache | `~/.cache/sonavelt/` (clear downloads from Settings) |
+```bash
+git clone https://github.com/Agapenordev/sonavelt
+cd sonavelt
+cargo build --release
+```
 
-## Roadmap
+You need a recent stable Rust toolchain. On Linux, also the ALSA development headers
+(`alsa-lib-devel`, `libasound2-dev` or `alsa-lib`).
 
-Next up: media keys and desktop integration (MPRIS), real tags for local files, the current
-song on radio stations, and builds for older distros. The full list is in [ROADMAP.md](ROADMAP.md).
+</details>
+
+<details>
+<summary><b>How it works</b></summary>
+
+- **UI:** [egui](https://github.com/emilk/egui) on OpenGL, painted by hand. The background is a
+  color mesh built from a 4×4 sample of the cover art.
+- **Audio:** `ffmpeg` decodes every source to raw PCM, played through
+  [cpal](https://github.com/RustAudio/cpal).
+- **YouTube:** `yt-dlp` streams into the player while the full file saves to the cache.
+- **Your data:** `library.json` in your config folder (`~/.config/sonavelt` on Linux,
+  `%APPDATA%\sonavelt` on Windows). Downloads and artwork live in the cache folder.
+
+</details>
 
 ## Contributing
 
-Bug reports, ideas and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers
-setup, the checks every PR runs, and how to open a pull request. Using an AI coding agent? Point
-it at [AGENTS.md](AGENTS.md), which explains the architecture and the rules that keep the
-codebase and design consistent.
+Bug reports, ideas and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). Using an
+AI coding agent? Point it at [AGENTS.md](AGENTS.md).
 
 ## Credits
 
-- Lyrics from [LRCLIB](https://lrclib.net), radio directory from [radio-browser.info](https://www.radio-browser.info).
-- Fonts: [Instrument Serif](https://github.com/Instrument/instrument-serif),
-  [Bricolage Grotesque](https://github.com/ateliertriay/bricolage) and
-  [DM Mono](https://github.com/googlefonts/dm-mono), all under the SIL Open Font License.
-- Icons: [Phosphor](https://phosphoricons.com) (MIT).
-- Station logos and artwork belong to their owners.
+Lyrics from [LRCLIB](https://lrclib.net), radio directory from
+[radio-browser.info](https://www.radio-browser.info). Fonts:
+[Instrument Serif](https://github.com/Instrument/instrument-serif),
+[Bricolage Grotesque](https://github.com/ateliertriay/bricolage) and
+[DM Mono](https://github.com/googlefonts/dm-mono) (SIL OFL). Icons:
+[Phosphor](https://phosphoricons.com) (MIT). Station logos and artwork belong to their owners.
 
 Sonavelt plays YouTube through `yt-dlp`. Please respect YouTube's terms and the artists whose
 music you enjoy.
-
-## License
 
 [MIT](LICENSE) © 2026 Agapenordev

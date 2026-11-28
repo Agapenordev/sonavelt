@@ -42,6 +42,7 @@ pub fn rgba(n: usize) -> Vec<u8> {
 }
 
 /// Same pixels as ARGB32 in network byte order, the tray protocol's format.
+#[cfg(target_os = "linux")]
 pub fn argb(n: usize) -> Vec<u8> {
     rgba(n).as_chunks::<4>().0.iter().flat_map(|p| [p[3], p[0], p[1], p[2]]).collect()
 }

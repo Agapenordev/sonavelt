@@ -54,6 +54,11 @@ one matters to you, open an issue or add a thumbs-up to an existing one. Want to
 - **Heard on radio.** Every song your stations played while you listened, to play or heart.
 - **Private session**, and **why this pick?** on every recommendation.
 
+## Coming in 0.5
+
+- **Windows.** Builds and in-app updates for Windows 10 and 11. The tray and media keys are
+  Linux-only for now.
+
 ## Next
 
 - **Packages.** AUR, Flatpak, and a `.deb`/`.rpm`.
@@ -63,10 +68,11 @@ one matters to you, open an issue or add a thumbs-up to an existing one. Want to
 
 - **Gapless playback and crossfade** between songs.
 - **Light theme.**
+- **Media keys and tray on Windows** (System Media Transport Controls).
 
 ## Maybe someday
 
-- Windows and macOS builds.
+- macOS builds.
 - Last.fm / ListenBrainz scrobbling.
 - Podcasts.
 
