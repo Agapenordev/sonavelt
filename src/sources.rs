@@ -9,6 +9,19 @@ use std::process::Command;
 const UA: &str = "sonavelt/0.1 (https://github.com/)";
 const AUDIO_EXT: &[&str] = &["mp3", "flac", "ogg", "opus", "m4a", "aac", "wav", "wma", "webm"];
 
+/// Start one of the helper programs (ffmpeg, yt-dlp). On Windows without this a console window
+/// would flash up for every song.
+pub fn tool(program: &str) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
 pub fn scan_folder(dir: &str) -> Vec<Track> {
     let mut v: Vec<Track> = walkdir::WalkDir::new(shellexpand(dir))
         .follow_links(true)
@@ -58,7 +71,7 @@ pub fn youtube_search(query: &str, n: usize) -> Result<Vec<Track>, String> {
 
 /// A YouTube playlist's title, for saving it under the same name.
 pub fn youtube_playlist_title(url: &str) -> Option<String> {
-    let out = Command::new("yt-dlp").args(["--flat-playlist", "-I", "1", "--no-warnings", "--print", "playlist_title", url]).output().ok()?;
+    let out = tool("yt-dlp").args(["--flat-playlist", "-I", "1", "--no-warnings", "--print", "playlist_title", url]).output().ok()?;
     let title = String::from_utf8_lossy(&out.stdout).lines().next()?.trim().to_string();
     (!title.is_empty() && title != "NA").then(|| crate::library::plain_text(&title))
 }
@@ -70,7 +83,7 @@ pub fn youtube_mix(id: &str, n: usize) -> Result<Vec<Track>, String> {
 }
 
 fn yt_flat(args: &[&str]) -> Result<Vec<Track>, String> {
-    let out = Command::new("yt-dlp").args(["--flat-playlist", "-j", "--no-warnings"]).args(args).output().map_err(|e| format!("yt-dlp not found: {e}"))?;
+    let out = tool("yt-dlp").args(["--flat-playlist", "-j", "--no-warnings"]).args(args).output().map_err(|e| format!("yt-dlp not found: {e}"))?;
     if !out.status.success() && out.stdout.is_empty() {
         return Err(String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("YouTube search failed").to_string());
     }
@@ -113,7 +126,7 @@ const BEST_AUDIO: &str = "bestaudio[protocol^=http]/bestaudio/best";
 /// couple of seconds and the finished file lands in the cache for seeking and replay.
 pub fn youtube_stream(id: &str) -> Result<Box<dyn std::io::Read + Send>, String> {
     let _ = std::fs::create_dir_all(yt_dir());
-    let mut child = Command::new("yt-dlp")
+    let mut child = tool("yt-dlp")
         .args(["-f", BEST_AUDIO, "--no-warnings", "--no-playlist", "--no-progress", "-q", "--extractor-args", FAST_CLIENT, "-o", "-"])
         .arg(format!("https://www.youtube.com/watch?v={id}"))
         .current_dir(yt_dir()) // an interrupted download leaves fragment files in the working directory
@@ -203,7 +216,7 @@ pub fn youtube_audio(id: &str) -> Result<String, String> {
     let mut err = String::from("couldn't download video");
     // YouTube hands out the odd 403 at random; a second attempt usually gets through
     for attempt in 0..3 {
-        let mut cmd = Command::new("yt-dlp");
+        let mut cmd = tool("yt-dlp");
         cmd.current_dir(&dir);
         cmd.args(["-f", BEST_AUDIO, "--no-warnings", "--no-playlist", "--no-progress", "--retries", "5", "-o", &template, "--print", "after_move:filepath"]);
         if attempt == 0 {

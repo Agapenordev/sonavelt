@@ -6,7 +6,6 @@
 use crate::library::{Source, Track};
 use eframe::egui::{self, Color32, Rect, TextureHandle, pos2};
 use std::collections::HashMap;
-use std::process::Command;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
@@ -171,7 +170,7 @@ fn fetch(t: &Track, size: u32) -> Option<(Vec<u8>, bool)> {
         Source::YouTube(id) => get(&format!("https://i.ytimg.com/vi/{id}/mqdefault.jpg")).map(real),
         Source::Radio(stream) => station_logo(t, stream),
         Source::Local(p) => {
-            let out = Command::new("ffmpeg")
+            let out = crate::sources::tool("ffmpeg")
                 .args(["-v", "error", "-i"])
                 .arg(p)
                 .args(["-an", "-frames:v", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-"])

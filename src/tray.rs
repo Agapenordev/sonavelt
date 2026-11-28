@@ -1,9 +1,12 @@
 //! System tray icon (freedesktop StatusNotifierItem) with playback controls.
 
 use eframe::egui;
+#[cfg(target_os = "linux")]
 use ksni::blocking::TrayMethods;
 use std::sync::mpsc::Sender;
 
+// on Windows nothing sends these yet: no tray or media keys there
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub enum TrayCmd {
     Toggle,
     Next,
@@ -14,6 +17,7 @@ pub enum TrayCmd {
     SeekTo(f64),
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub struct RwTray {
     tx: Sender<TrayCmd>,
     pub ctx: egui::Context,
@@ -21,6 +25,7 @@ pub struct RwTray {
     pub playing: bool,
 }
 
+#[cfg(target_os = "linux")]
 impl RwTray {
     fn send(&self, c: TrayCmd) {
         let _ = self.tx.send(c);
@@ -28,13 +33,32 @@ impl RwTray {
     }
 }
 
+#[cfg(target_os = "linux")]
 pub type Handle = ksni::blocking::Handle<RwTray>;
 
+// shortcut: no tray on Windows yet (Shell_NotifyIcon); closing the window quits there
+#[cfg(not(target_os = "linux"))]
+pub struct Handle;
+
+#[cfg(not(target_os = "linux"))]
+impl Handle {
+    pub fn update<R>(&self, _: impl FnOnce(&mut RwTray) -> R) -> Option<R> {
+        None
+    }
+}
+
 /// Start the tray; `None` when no tray host is running (no status bar with a tray).
+#[cfg(target_os = "linux")]
 pub fn spawn(tx: Sender<TrayCmd>, ctx: egui::Context) -> Option<Handle> {
     RwTray { tx, ctx, now: "Nothing playing".into(), playing: false }.spawn().map_err(|e| eprintln!("tray unavailable: {e}")).ok()
 }
 
+#[cfg(not(target_os = "linux"))]
+pub fn spawn(_: Sender<TrayCmd>, _: egui::Context) -> Option<Handle> {
+    None
+}
+
+#[cfg(target_os = "linux")]
 impl ksni::Tray for RwTray {
     fn id(&self) -> String {
         "sonavelt".into()

@@ -5,7 +5,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -170,7 +170,7 @@ fn build<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal:
 #[allow(clippy::too_many_arguments)]
 fn reader(sh: Arc<Shared>, generation: u64, input: Option<String>, pipe: Option<Box<dyn Read + Send>>, seek: f64, rate: u32, ch: u16, filter: Option<String>) {
     let input = input.unwrap_or_else(|| "pipe:0".into());
-    let mut cmd = Command::new("ffmpeg");
+    let mut cmd = crate::sources::tool("ffmpeg");
     cmd.args(["-hide_banner", "-loglevel", "info"]);
     if input.starts_with("http") {
         // some stations and CDNs refuse ffmpeg's default "Lavf" agent with 403

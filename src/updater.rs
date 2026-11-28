@@ -1,12 +1,17 @@
-//! Self-update from GitHub releases: find a newer tag, download its Linux binary, swap it in
-//! place of the running one, restart. Blocking calls; run them on a worker thread.
+//! Self-update from GitHub releases: find a newer tag, download the build for this system, swap
+//! it in place of the running one, restart. Blocking calls; run them on a worker thread.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 const REPO: &str = "Agapenordev/sonavelt";
-/// Release asset holding the bare executable.
+/// Release asset holding the bare executable for this system.
+#[cfg(windows)]
+pub const ASSET: &str = "sonavelt-x86_64-windows.exe";
+#[cfg(not(windows))]
 pub const ASSET: &str = "sonavelt-x86_64-linux";
+/// How a valid executable for this system starts.
+const MAGIC: &[u8] = if cfg!(windows) { b"MZ" } else { b"\x7fELF" };
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Clone)]
@@ -35,7 +40,7 @@ pub fn check() -> Result<Option<Release>, String> {
         .as_array()
         .and_then(|a| a.iter().find(|x| x["name"] == ASSET))
         .and_then(|x| x["browser_download_url"].as_str())
-        .ok_or("The new release has no Linux build yet")?;
+        .ok_or("The new release has no build for your system yet")?;
     Ok(Some(Release { version, url: url.to_string() }))
 }
 
@@ -45,18 +50,42 @@ pub fn install(r: &Release, exe: &Path) -> Result<(), String> {
     let resp = ureq::get(&r.url).set("User-Agent", "sonavelt-updater").call().map_err(|e| format!("Download failed: {e}"))?;
     let mut bytes = Vec::new();
     resp.into_reader().take(200 << 20).read_to_end(&mut bytes).map_err(|e| format!("Download failed: {e}"))?;
-    // never swap in something that isn't a Linux executable (an error page, a truncated file)
-    if bytes.len() < 1 << 20 || !bytes.starts_with(b"\x7fELF") {
+    // never swap in something that isn't an executable for this system (an error page, a truncated file)
+    if bytes.len() < 1 << 20 || !bytes.starts_with(MAGIC) {
         return Err("The download wasn't a valid Sonavelt build".into());
     }
     let tmp = exe.with_extension("new");
     std::fs::write(&tmp, &bytes).map_err(|e| format!("Couldn't write the update: {e}"))?;
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
-    // rename is atomic: the old file stays intact until the new one is complete
-    std::fs::rename(&tmp, exe).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+    }
+    replace(&tmp, exe)
+}
+
+/// Swap the downloaded file in. A rename is atomic: the old file stays intact until the new one is complete.
+#[cfg(not(windows))]
+fn replace(tmp: &Path, exe: &Path) -> Result<(), String> {
+    std::fs::rename(tmp, exe).map_err(|e| {
+        let _ = std::fs::remove_file(tmp);
         format!("Couldn't replace the app (is its folder writable?): {e}")
+    })
+}
+
+/// Windows won't replace a running .exe, but it will rename it: move it aside, then swap in.
+#[cfg(windows)]
+fn replace(tmp: &Path, exe: &Path) -> Result<(), String> {
+    let old = exe.with_extension("old");
+    let _ = std::fs::remove_file(&old); // left over from the previous update
+    std::fs::rename(exe, &old).map_err(|e| {
+        let _ = std::fs::remove_file(tmp);
+        format!("Couldn't replace the app (is its folder writable?): {e}")
+    })?;
+    std::fs::rename(tmp, exe).map_err(|e| {
+        let _ = std::fs::rename(&old, exe); // put the working copy back
+        let _ = std::fs::remove_file(tmp);
+        format!("Couldn't replace the app: {e}")
     })
 }
 
@@ -78,6 +107,7 @@ mod tests {
     // Talks to GitHub; run with `cargo test -- --ignored updater`.
     #[test]
     #[ignore]
+    #[cfg(target_os = "linux")]
     fn updater_live_release() {
         assert!(super::check().unwrap().is_none(), "this build should be the latest release");
         // install the published binary over a scratch file, through the real download and checks

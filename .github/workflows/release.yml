@@ -1,5 +1,5 @@
-# Bump `version` in Cargo.toml and push to main: this builds Sonavelt and publishes the
-# GitHub release vX.Y.Z, which installed copies then offer as an in-app update.
+# Bump `version` in Cargo.toml and push to main: this builds Sonavelt for Linux and Windows and
+# publishes the GitHub release vX.Y.Z, which installed copies then offer as an in-app update.
 # Run it by hand with "dry run" on to build and package without publishing.
 
 name: Release
@@ -29,6 +29,9 @@ jobs:
   release:
     # the oldest supported runner: binaries built against its glibc (2.35) run on newer systems too
     runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      exists: ${{ steps.version.outputs.exists }}
     steps:
       - uses: actions/checkout@v4
 
@@ -91,5 +94,51 @@ jobs:
           v=${{ steps.version.outputs.version }}
           gh release create "v$v" --target "$GITHUB_SHA" --title "Sonavelt $v" --generate-notes \
             dist/sonavelt-$v-x86_64-linux.tar.gz dist/sonavelt-x86_64-linux dist/SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  windows:
+    # adds the Windows build to the release the Linux job just published
+    needs: release
+    if: needs.release.outputs.exists == 'false' || inputs.dry_run
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test and build
+        run: |
+          cargo test
+          cargo build --release
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $v = "${{ needs.release.outputs.version }}"
+          $dir = "sonavelt-$v-x86_64-windows"
+          New-Item -ItemType Directory -Path "dist/$dir" | Out-Null
+          Copy-Item target/release/sonavelt.exe, README.md, LICENSE "dist/$dir/"
+          Compress-Archive -Path "dist/$dir" -DestinationPath "dist/$dir.zip"
+          # the in-app updater downloads exactly this file name
+          Copy-Item target/release/sonavelt.exe dist/sonavelt-x86_64-windows.exe
+          Get-FileHash "dist/$dir.zip", dist/sonavelt-x86_64-windows.exe -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
+            Set-Content dist/SHA256SUMS-windows
+
+      - name: Keep build as artifact (dry run)
+        if: inputs.dry_run
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonavelt-${{ needs.release.outputs.version }}-windows
+          path: |
+            dist/*.zip
+            dist/sonavelt-x86_64-windows.exe
+            dist/SHA256SUMS-windows
+
+      - name: Add to release
+        if: needs.release.outputs.exists == 'false' && !inputs.dry_run
+        shell: pwsh
+        run: gh release upload "v${{ needs.release.outputs.version }}" (Get-ChildItem dist/*.zip).FullName dist/sonavelt-x86_64-windows.exe dist/SHA256SUMS-windows
         env:
           GH_TOKEN: ${{ github.token }}

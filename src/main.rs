@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")] // no console window behind the app
+
 mod art;
 mod audio;
 mod library;
@@ -26,6 +28,7 @@ const ROW_H: f32 = 56.0;
 
 fn main() -> eframe::Result {
     library::migrate_from_rustwave();
+    #[cfg(target_os = "linux")]
     install_desktop_entry();
     let mut app: Option<App> = None;
     loop {
@@ -1867,6 +1870,7 @@ fn logo_texture(ctx: &egui::Context) -> egui::TextureHandle {
     ctx.load_texture("logo", egui::ColorImage::from_rgba_unmultiplied([n, n], &logo::rgba(n)), egui::TextureOptions::LINEAR)
 }
 
+#[cfg(target_os = "linux")]
 /// Wayland takes window icons from a desktop entry, not from the app: install one (and the
 /// icon) the first time, which also puts Sonavelt in the app launcher.
 fn install_desktop_entry() {
