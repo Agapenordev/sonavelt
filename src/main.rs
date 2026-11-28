@@ -79,6 +79,7 @@ enum Msg {
     YouTube(Result<Vec<Track>, String>),
     Radio(Result<Vec<Track>, String>),
     Resolved(u64, Result<String, String>),
+    Warmed(String, Option<String>),
     Lyrics(String, Result<Lyrics, String>),
     Recs(Vec<Track>),
     RadioNow(u64, Option<String>),
@@ -144,6 +145,10 @@ struct App {
     view: View,
     yt_fallback: bool,
     prefetched: HashSet<String>,
+    /// Direct audio addresses of YouTube songs the pointer rested on, by video id, with when they
+    /// were looked up, so a click starts at once.
+    warm: HashMap<String, (String, Instant)>,
+    warming: HashSet<String>,
     /// Song the current station is playing, from its stream metadata.
     radio_now: Option<String>,
     radio_polled: Option<Instant>,
@@ -240,6 +245,8 @@ impl App {
             view: View::Home,
             yt_fallback: false,
             prefetched: HashSet::new(),
+            warm: HashMap::new(),
+            warming: HashSet::new(),
             radio_now: None,
             radio_polled: None,
             home: recommend::Home::load(),
@@ -396,6 +403,14 @@ impl App {
             // already downloaded: instant. Otherwise stream while yt-dlp downloads.
             Source::YouTube(id) => match sources::youtube_cached(id) {
                 Some(path) => engine.play(&path, 0.0),
+                None if let Some((url, _)) = self.warm.remove(id).filter(|(_, at)| at.elapsed().as_secs() < 3600) => {
+                    engine.play(&url, 0.0);
+                    // the address plays now; the cache copy is for replays
+                    if self.prefetched.insert(id.clone()) {
+                        let id = id.clone();
+                        std::thread::spawn(move || sources::youtube_audio(&id));
+                    }
+                }
                 None => match sources::youtube_stream(id) {
                     Ok(pipe) => engine.play_reader(pipe),
                     Err(e) => {
@@ -419,6 +434,19 @@ impl App {
         self.current = Some(t);
         self.fetch_lyrics();
         self.prefetch_next();
+    }
+
+    /// Look up a YouTube song's audio address while the pointer rests on it.
+    fn warm_up(&mut self, id: String) {
+        if self.warm.contains_key(&id) || self.warming.len() >= 3 || sources::youtube_cached(&id).is_some() || !self.warming.insert(id.clone()) {
+            return;
+        }
+        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        std::thread::spawn(move || {
+            let url = sources::youtube_url(&id);
+            let _ = tx.send(Msg::Warmed(id, url));
+            ctx.request_repaint();
+        });
     }
 
     /// Download the next YouTube song in the background so it starts instantly.
@@ -594,6 +622,9 @@ impl App {
 
     fn tick(&mut self, ctx: &egui::Context) {
         self.art.poll(ctx);
+        if let Some(id) = ctx.data_mut(|d| d.remove_temp::<String>(egui::Id::new(WARM))) {
+            self.warm_up(id);
+        }
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 Msg::Local(v) => {
@@ -612,6 +643,12 @@ impl App {
                     match r {
                         Ok(v) => self.radios = v,
                         Err(e) => self.toast(format!("Radio directory unreachable: {e}")),
+                    }
+                }
+                Msg::Warmed(id, url) => {
+                    self.warming.remove(&id);
+                    if let Some(url) = url {
+                        self.warm.insert(id, (url, Instant::now()));
                     }
                 }
                 Msg::Resolved(generation, r) => {
@@ -650,7 +687,10 @@ impl App {
                 }
                 Msg::Home(home) => {
                     let seen = &mut self.lib.feedback.impressions;
-                    for t in home.shelves.iter().flat_map(|s| &s.tracks) {
+                    // a pick counts as shown once per half hour, however often Home is reopened
+                    let shown_lately: HashSet<String> =
+                        if self.home.newer_than(1800) { self.home.shelves.iter().flat_map(|s| &s.tracks).map(Track::key).collect() } else { HashSet::new() };
+                    for t in home.shelves.iter().flat_map(|s| &s.tracks).filter(|t| !shown_lately.contains(&t.key())) {
                         *seen.entry(t.key()).or_default() += 1;
                     }
                     if seen.len() > 3000 {
@@ -851,6 +891,10 @@ impl App {
         ] {
             let dot = (live && v == View::NowPlaying).then_some(accent);
             if nav_item(ui, ic, label, None, self.view == v, dot) {
+                // the current picks stay up while new ones are found
+                if v == View::Home && !self.home.newer_than(60) {
+                    self.refresh_home();
+                }
                 self.set_view(v);
             }
         }
@@ -1578,6 +1622,7 @@ fn track_list(ui: &mut Ui, list: &[Track], idx: &[usize], c: &RowCtx, cache: &mu
             let is_cur = c.is_current(i, t);
             let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
             let hover = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.15);
+            warm_on_rest(ui, t, hover);
             let p = ui.painter();
             if is_cur {
                 p.rect_filled(r, 12, SELECTED);
@@ -1669,12 +1714,25 @@ fn card_columns(width: f32, target: f32, gap: f32) -> (usize, f32) {
 
 /// One artwork card: image of height `ih`, title and artist under it. `salt` keeps cards with the
 /// same index in different shelves apart.
+const WARM: &str = "warm-youtube";
+
+/// Once the hover has fully faded in, the pointer is resting on a song, not passing over it:
+/// ask the app to look up its audio address so a click plays at once.
+fn warm_on_rest(ui: &Ui, t: &Track, hover: f32) {
+    if let Source::YouTube(id) = &t.source
+        && hover >= 1.0
+    {
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(WARM), id.clone()));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn card(ui: &mut Ui, card: Rect, ih: f32, i: usize, t: &Track, c: &RowCtx, cache: &mut ArtCache, salt: &str) -> Option<RowAct> {
     let mut act = None;
     let cw = card.width();
     let resp = ui.interact(card, ui.id().with(("card", salt, i)), Sense::click());
     let hover = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.18);
+    warm_on_rest(ui, t, hover);
     let is_cur = c.is_current(i, t);
     let img = Rect::from_min_size(card.min, vec2(cw, ih));
     let p = ui.painter();

@@ -76,10 +76,11 @@ pub fn youtube_playlist_title(url: &str) -> Option<String> {
     (!title.is_empty() && title != "NA").then(|| crate::library::plain_text(&title))
 }
 
-/// YouTube's own Mix for a video: the songs YouTube would play after it. Mixes never end, so
-/// only the first `n` are listed.
+/// YouTube Music's radio for a video: the songs it would play after it. The plain YouTube Mix
+/// (`RD`) drifts into global hits within a few songs; this one stays closer to the seed. Mixes
+/// never end, so only the first `n` are listed.
 pub fn youtube_mix(id: &str, n: usize) -> Result<Vec<Track>, String> {
-    yt_flat(&["-I", &format!("1:{n}"), &format!("https://www.youtube.com/watch?v={id}&list=RD{id}")])
+    yt_flat(&["-I", &format!("1:{n}"), &format!("https://www.youtube.com/watch?v={id}&list=RDAMVM{id}")])
 }
 
 fn yt_flat(args: &[&str]) -> Result<Vec<Track>, String> {
@@ -203,6 +204,18 @@ impl Drop for StreamReader {
         // skipped before the download finished: stop it rather than fetch a song nobody hears
         self.buf.cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
     }
+}
+
+/// A video's direct audio address, looked up ahead of a click: ffmpeg starts from it in about
+/// half a second, where `youtube_stream` spends two on the lookup first. Expires after a few hours.
+pub fn youtube_url(id: &str) -> Option<String> {
+    let out = tool("yt-dlp")
+        .args(["-f", BEST_AUDIO, "--no-warnings", "--no-playlist", "--extractor-args", FAST_CLIENT, "-g"])
+        .arg(format!("https://www.youtube.com/watch?v={id}"))
+        .output()
+        .ok()?;
+    let url = String::from_utf8_lossy(&out.stdout).lines().next()?.trim().to_string();
+    url.starts_with("https://").then_some(url)
 }
 
 /// Download a video's audio into the cache (used to prefetch the next song) and return the path.

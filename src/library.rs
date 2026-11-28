@@ -169,10 +169,13 @@ pub struct Feedback {
     pub impressions: HashMap<String, u32>,
 }
 
-/// Lowercased artist without the channel suffixes YouTube adds ("Samara Officiel", "X - Topic",
-/// "XVEVO"), so a channel and the name in a title compare equal.
+/// Lowercased artist without what YouTube channels add ("Samara Officiel", "X - Topic", "XVEVO",
+/// "Official X"), so a channel and the name in a title compare equal.
 pub fn artist_key(a: &str) -> String {
     let mut a = a.to_lowercase().trim().to_string();
+    if let Some(rest) = a.strip_prefix("official ") {
+        a = rest.trim().to_string(); // "Official Arctic Monkeys"
+    }
     for suffix in [" - topic", "vevo", " officiel", " official", " music", " tv"] {
         if let Some(rest) = a.strip_suffix(suffix) {
             a = rest.trim().to_string();
@@ -422,6 +425,7 @@ mod tests {
         assert!(lib.dismissed(&s));
         lib.feedback.hidden_artists.push(artist_key("Samara Officiel"));
         assert_eq!(artist_key("Samara Officiel"), "samara");
+        assert_eq!(artist_key("Official Arctic Monkeys"), "arctic monkeys");
         assert!(lib.dismissed(&song("Samara - Yammi", "7clouds")), "artist named in a lyric channel's title");
         assert!(!lib.dismissed(&song("Lana Del Rey - Video Games", "Lana Del Rey")));
         lib.feedback.hidden_artists.push(artist_key("Billie Eilish"));

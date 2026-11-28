@@ -314,4 +314,21 @@ mod stream_tests {
         }
         eprintln!("cached after {:?}", t0.elapsed());
     }
+
+    #[test]
+    #[ignore]
+    fn youtube_stream_from_a_looked_up_address_starts_at_once() {
+        let url = crate::sources::youtube_url("kJQP7kiw5Fk").expect("no address");
+        let mut e = super::Engine::new().unwrap();
+        e.set_volume(0.0);
+        let t0 = std::time::Instant::now();
+        e.play(&url, 0.0);
+        while e.position() < 0.05 {
+            assert!(t0.elapsed().as_secs() < 20, "no audio after 20s");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        eprintln!("first audio after {:?} from a looked-up address", t0.elapsed());
+        assert!(t0.elapsed().as_secs_f64() < 1.5);
+        assert!(e.seekable());
+    }
 }

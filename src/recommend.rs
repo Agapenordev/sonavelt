@@ -104,6 +104,10 @@ pub struct Taste {
     interests: Vec<Interest>,
     /// Songs never to recommend: already yours, hidden or un-hearted.
     known: HashSet<String>,
+    /// The same, as `song` keys: another upload of a song you know is not new.
+    known_songs: HashSet<String>,
+    /// Your songs are slowed or sped-up versions, so those versions are welcome in picks.
+    variants: bool,
     /// Artists you asked not to see.
     blocked: Vec<String>,
     /// Genres you blocked.
@@ -141,6 +145,10 @@ impl Home {
         self.shelves.is_empty() || now_secs().saturating_sub(self.made_at) > MAX_AGE_SECS
     }
 
+    pub fn newer_than(&self, secs: u64) -> bool {
+        now_secs().saturating_sub(self.made_at) < secs
+    }
+
     /// "updated 2 h ago"
     pub fn age(&self) -> String {
         match now_secs().saturating_sub(self.made_at) / 60 {
@@ -158,6 +166,39 @@ fn who(t: &Track) -> String {
         Some((a, _)) if !a.trim().is_empty() && a.len() < 40 => artist_key(a),
         _ => artist_key(&t.artist),
     }
+}
+
+/// Words in titles that name an upload, not a song.
+const NOISE: &[&str] = &["official", "video", "audio", "lyrics", "lyric", "visualizer", "hd", "4k", "mv", "slowed", "reverb", "nightcore", "8d"];
+
+/// One key for every upload of a song: the artist and the title without "(Official Video)",
+/// "[Lyrics]" or "slowed + reverb".
+fn song(t: &Track) -> String {
+    let mut depth = 0;
+    let bare: String = t
+        .title
+        .chars()
+        .filter(|&c| match c {
+            '(' | '[' => {
+                depth += 1;
+                false
+            }
+            ')' | ']' => {
+                depth -= 1;
+                false
+            }
+            _ => depth <= 0,
+        })
+        .collect();
+    let name = bare.split_once(" - ").map_or(bare.as_str(), |(_, s)| s).to_lowercase().replace("sped up", "");
+    let words: Vec<&str> = name.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty() && !NOISE.contains(w)).collect();
+    format!("{}|{}", who(t), words.join(" "))
+}
+
+/// Slowed, sped-up and other remakes of a song.
+fn variant(t: &Track) -> bool {
+    let title = t.title.to_lowercase();
+    ["slowed", "reverb", "sped up", "nightcore", "8d", "karaoke", "instrumental"].iter().any(|w| title.contains(w))
 }
 
 /// Seconds you really listened. Older history has only play counts, and back then a play was
@@ -290,7 +331,7 @@ pub fn taste(lib: &Library) -> Taste {
         i.weight /= total.max(1.0);
     }
 
-    let known = lib
+    let known: HashSet<String> = lib
         .recent
         .iter()
         .chain(&lib.favorites)
@@ -301,9 +342,22 @@ pub fn taste(lib: &Library) -> Taste {
         .collect();
     let loved: HashSet<String> = lib.favorites.iter().map(|t| artist_key(&t.artist)).collect();
     let cooled = fb.unliked.iter().map(|t| artist_key(&t.artist)).filter(|a| !loved.contains(a)).collect();
+    let known_songs = lib.recent.iter().chain(&lib.favorites).chain(lib.playlists.values().flatten()).chain(&fb.unliked).map(song).collect();
+    let variants = interests.first().is_some_and(|i| matches!(i.title.as_str(), "Slowed + reverb" | "Sped up"));
     let heard = lib.recent.iter().chain(&lib.favorites).map(who).collect();
     let radio_tag = tag_time.into_iter().max_by(|a, b| a.1.total_cmp(&b.1).then(b.0.cmp(&a.0))).map(|(t, _)| t);
-    Taste { interests, known, blocked: fb.hidden_artists.clone(), genres: fb.hidden_genres.clone(), cooled, shown: fb.impressions.clone(), heard, radio_tag }
+    Taste {
+        interests,
+        known,
+        known_songs,
+        variants,
+        blocked: fb.hidden_artists.clone(),
+        genres: fb.hidden_genres.clone(),
+        cooled,
+        shown: fb.impressions.clone(),
+        heard,
+        radio_tag,
+    }
 }
 
 /// Songs only, no hour-long compilations or 20-second clips.
@@ -311,7 +365,6 @@ fn song_length(t: &Track) -> bool {
     t.duration.is_some_and(|d| (60.0..=600.0).contains(&d))
 }
 
-/// Combine one interest's weighted mixes into a ranked list of new songs.
 /// Combine one interest's weighted mixes into a ranked list of new songs, each with the reason
 /// it was picked (the seed that pointed to it most strongly).
 fn rank(mixes: &[(f64, String, Vec<Track>)], taste: &Taste) -> Vec<(Track, String)> {
@@ -325,20 +378,32 @@ fn rank(mixes: &[(f64, String, Vec<Track>)], taste: &Taste) -> Vec<(Track, Strin
         }
     }
 
+    // scored per song, so its uploads add up and show once, as the artist's own upload if possible
     let mut score: HashMap<String, (Track, f64)> = HashMap::new();
     let mut why: HashMap<String, (f64, &str)> = HashMap::new();
+    let better = |t: &Track| (artist_key(&t.artist) == who(t), !variant(t));
     for (weight, reason, mix) in mixes {
         for (pos, t) in mix.iter().take(MIX_LEN).enumerate() {
-            if taste.known.contains(&t.key()) || !song_length(t) || taste.blocked.iter().any(|a| by_artist(t, a)) || taste.genres.iter().any(|g| in_genre(t, g))
+            let key = song(t);
+            if taste.known.contains(&t.key())
+                || taste.known_songs.contains(&key)
+                || !song_length(t)
+                || taste.blocked.iter().any(|a| by_artist(t, a))
+                || taste.genres.iter().any(|g| in_genre(t, g))
             {
                 continue;
             }
             let cooled = if taste.cooled.iter().any(|a| by_artist(t, a)) { 0.3 } else { 1.0 };
             // shown and passed over: the song fades fast, an unfamiliar artist a little slower
             let ignored = 0.6f64.powi(*taste.shown.get(&t.key()).unwrap_or(&0) as i32) * 0.8f64.powi(*artist_shown.get(&who(t)).unwrap_or(&0) as i32);
-            let s = weight * cooled * ignored / (1.0 + 0.12 * pos as f64);
-            score.entry(t.key()).or_insert_with(|| (t.clone(), 0.0)).1 += s;
-            let best = why.entry(t.key()).or_insert((0.0, reason));
+            let remake = if variant(t) && !taste.variants { 0.4 } else { 1.0 };
+            let s = weight * cooled * ignored * remake / (1.0 + 0.12 * pos as f64);
+            let entry = score.entry(key.clone()).or_insert_with(|| (t.clone(), 0.0));
+            if better(t) > better(&entry.0) {
+                entry.0 = t.clone();
+            }
+            entry.1 += s;
+            let best = why.entry(key).or_insert((0.0, reason));
             if s > best.0 {
                 *best = (s, reason);
             }
@@ -346,16 +411,19 @@ fn rank(mixes: &[(f64, String, Vec<Track>)], taste: &Taste) -> Vec<(Track, Strin
     }
     let mut ranked: Vec<(Track, f64)> = score.into_values().collect();
     ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.title.cmp(&b.0.title)));
+    // artists you already play get one slot, so most picks are artists new to you
     let mut per_artist: HashMap<String, usize> = HashMap::new();
     ranked
         .into_iter()
         .filter(|(t, _)| {
-            let n = per_artist.entry(who(t)).or_default();
+            let a = who(t);
+            let cap = if taste.heard.contains(&a) { 1 } else { 2 };
+            let n = per_artist.entry(a).or_default();
             *n += 1;
-            *n <= 2
+            *n <= cap
         })
         .map(|(t, _)| {
-            let reason = why.get(&t.key()).map_or("", |(_, r)| r).to_string();
+            let reason = why.get(&song(&t)).map_or("", |(_, r)| r).to_string();
             (t, reason)
         })
         .take(28)
@@ -518,6 +586,8 @@ mod tests {
         Taste {
             interests: vec![],
             known: known.iter().map(|k| yt(k, "", 0.0).key()).collect(),
+            known_songs: HashSet::new(),
+            variants: false,
             blocked: blocked.iter().map(|s| s.to_string()).collect(),
             genres: vec![],
             cooled: cooled.iter().map(|s| s.to_string()).collect(),
@@ -650,6 +720,28 @@ mod tests {
     fn rank_caps_each_artist_at_two() {
         let mix: Vec<Track> = (0..5).map(|i| yt(&format!("s{i}"), "Same Artist - Topic", 200.0)).collect();
         assert_eq!(rank(&[(1.0, String::new(), mix)], &taste_with(&[], &[], &[], &[])).len(), 2);
+    }
+
+    #[test]
+    fn other_uploads_of_a_song_count_as_that_song() {
+        let up = |title: &str, channel: &str| Track { source: Source::YouTube(format!("{title}{channel}")), ..yt(title, channel, 200.0) };
+        let mut taste = taste_with(&[], &[], &[], &[]);
+        taste.known_songs.insert(song(&up("David Kushner - Daylight (Official Music Video)", "David Kushner")));
+        taste.heard.insert("david kushner".into());
+        let mix = vec![
+            up("David Kushner - Daylight [Lyrics]", "7clouds"),
+            up("David Kushner - California (slowed + reverb)", "Maria Males"),
+            up("David Kushner - California (Official Audio)", "David Kushner"),
+            up("David Kushner - Hero", "David Kushner"),
+            up("Gigi Perez - Sailor Song (sped up)", "Some Edits"),
+            up("Temper City - Self Aware", "Temper City"),
+        ];
+        let r: Vec<(String, String)> = rank(&[(1.0, String::new(), mix)], &taste).into_iter().map(|(t, _)| (t.title, t.artist)).collect();
+        let titles: Vec<&str> = r.iter().map(|(t, _)| t.as_str()).collect();
+        assert!(!titles.iter().any(|t| t.contains("Daylight")), "a known song in another upload: {titles:?}");
+        assert_eq!(r[0], ("David Kushner - California (Official Audio)".into(), "David Kushner".into()), "two uploads add up, the artist's own shows");
+        assert!(!titles.contains(&"David Kushner - Hero"), "one pick per artist you already play: {titles:?}");
+        assert_eq!(titles.last(), Some(&"Gigi Perez - Sailor Song (sped up)"), "remakes sink: {titles:?}");
     }
 
     #[test]
