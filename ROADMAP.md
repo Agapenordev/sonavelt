@@ -44,6 +44,12 @@ one matters to you, open an issue or add a thumbs-up to an existing one. Want to
   *Remove* in Recently played erases a song from your history and your picks.
 - **Cleaner interface.** Buttons and chips sized like controls instead of pills, no drop shadows
   on cards, a quiet *Live* label, plainer shelf titles and copy.
+- **Radio that works.** Dead streams are left out of station lists, a saved station that moved is
+  found again automatically, and stations get their real logos from their own websites.
+- **Sound.** Even out loudness between songs, and Bass, Vocal and Bright equalizer presets.
+- **Playlists in and out.** Save a pasted YouTube playlist as a Sonavelt playlist; export any
+  playlist as M3U.
+- **Lyrics timing nudge** for lyrics that run early or late, remembered per song.
 
 ## Next
 
@@ -53,9 +59,6 @@ one matters to you, open an issue or add a thumbs-up to an existing one. Want to
 ## Later
 
 - **Gapless playback and crossfade** between songs.
-- **Equalizer and volume normalization**, so loud and quiet songs sit at the same level.
-- **Import a YouTube playlist** as a Sonavelt playlist, and export playlists to M3U.
-- **Lyrics timing nudge** for files whose lyrics run early or late.
 - **Light theme.**
 
 ## Maybe someday

@@ -320,7 +320,9 @@ fn crop_letterbox(i: image::DynamicImage) -> image::DynamicImage {
     if w * 3 == h * 4 {
         let rgb = i.to_rgb8();
         let bar = (h - w * 9 / 16) / 2;
-        let dark = (0..w).step_by(8).all(|x| rgb.get_pixel(x, 2).0.iter().all(|&c| c < 20));
+        // JPEG noise keeps the bars from being pure black: judge the average of a top and a bottom row
+        let row = |y: u32| (0..w).map(|x| rgb.get_pixel(x, y).0.iter().map(|&c| c as u32).sum::<u32>()).sum::<u32>() / (w * 3);
+        let dark = row(bar / 2) < 24 && row(h - 1 - bar / 2) < 24;
         if dark && bar > 0 {
             return i.crop_imm(0, bar, w, h - 2 * bar);
         }
@@ -371,6 +373,18 @@ mod tests {
                 "https://radio.example.com/apple-touch-icon.png",
             ]
         );
+    }
+
+    #[test]
+    fn letterbox_bars_are_cut_even_when_noisy() {
+        let mut img = image::RgbImage::from_pixel(480, 360, image::Rgb([200, 120, 60]));
+        for y in (0..45).chain(315..360) {
+            for x in 0..480 {
+                img.put_pixel(x, y, image::Rgb([(x % 3 * 9) as u8, 6, 12])); // dark, not pure black
+            }
+        }
+        let out = crop_letterbox(image::DynamicImage::ImageRgb8(img));
+        assert_eq!((out.width(), out.height()), (480, 270));
     }
 
     #[test]

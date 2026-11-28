@@ -33,6 +33,8 @@ pub struct Engine {
     input: Option<String>,
     active: bool,
     offset: f64,
+    /// ffmpeg audio filter (EQ, loudness), applied from the next play or seek.
+    pub filter: Option<String>,
 }
 
 impl Engine {
@@ -50,7 +52,7 @@ impl Engine {
             _ => build::<f32>(&device, &config, shared.clone()),
         }?;
         stream.play().map_err(|e| e.to_string())?;
-        Ok(Self { shared, _stream: stream, rate: config.sample_rate, channels: config.channels, input: None, active: false, offset: 0.0 })
+        Ok(Self { shared, _stream: stream, rate: config.sample_rate, channels: config.channels, input: None, active: false, offset: 0.0, filter: None })
     }
 
     /// Start playing `input` (path or URL) from `seek` seconds.
@@ -79,7 +81,8 @@ impl Engine {
         self.active = true;
         self.offset = seek;
         let (sh, rate, ch) = (sh.clone(), self.rate, self.channels);
-        thread::spawn(move || reader(sh, generation, input, pipe, seek, rate, ch));
+        let filter = self.filter.clone();
+        thread::spawn(move || reader(sh, generation, input, pipe, seek, rate, ch, filter));
     }
 
     pub fn stop(&mut self) {
@@ -164,7 +167,8 @@ fn build<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: &cpal:
         .map_err(|e| e.to_string())
 }
 
-fn reader(sh: Arc<Shared>, generation: u64, input: Option<String>, pipe: Option<Box<dyn Read + Send>>, seek: f64, rate: u32, ch: u16) {
+#[allow(clippy::too_many_arguments)]
+fn reader(sh: Arc<Shared>, generation: u64, input: Option<String>, pipe: Option<Box<dyn Read + Send>>, seek: f64, rate: u32, ch: u16, filter: Option<String>) {
     let input = input.unwrap_or_else(|| "pipe:0".into());
     let mut cmd = Command::new("ffmpeg");
     cmd.args(["-hide_banner", "-loglevel", "info"]);
@@ -176,7 +180,11 @@ fn reader(sh: Arc<Shared>, generation: u64, input: Option<String>, pipe: Option<
     if seek > 0.0 {
         cmd.args(["-ss", &format!("{seek:.2}")]);
     }
-    cmd.args(["-i", &input, "-vn", "-f", "f32le", "-ac", &ch.to_string(), "-ar", &rate.to_string(), "pipe:1"]);
+    cmd.args(["-i", &input, "-vn"]);
+    if let Some(f) = &filter {
+        cmd.args(["-af", f]);
+    }
+    cmd.args(["-f", "f32le", "-ac", &ch.to_string(), "-ar", &rate.to_string(), "pipe:1"]);
     let stdin = if pipe.is_some() { Stdio::piped() } else { Stdio::null() };
     let mut child = match cmd.stdin(stdin).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
         Ok(c) => c,

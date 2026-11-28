@@ -13,7 +13,7 @@ mod viz;
 use art::ArtCache;
 use eframe::egui::{self, Align, Color32, CornerRadius, FontFamily, FontId, Key, Margin, Rect, RichText, Sense, Stroke, Ui, Vec2, pos2, vec2};
 use egui_phosphor::regular as icon;
-use library::{Background, Library, Palette, Source, Track};
+use library::{Background, Eq, Library, Palette, Source, Track};
 use sources::Lyrics;
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
@@ -80,6 +80,7 @@ enum Msg {
     Recs(Vec<Track>),
     RadioNow(u64, Option<String>),
     StationMoved(u64, String, Option<Track>),
+    Imported(Option<String>, Vec<Track>),
     Home(recommend::Home),
     UpdateChecked(bool, Result<Option<updater::Release>, String>),
     UpdateInstalled(Result<String, String>),
@@ -198,9 +199,10 @@ impl App {
                 t.art = c.art.clone();
             }
         }
-        let engine = audio::Engine::new();
-        if let Ok(e) = &engine {
+        let mut engine = audio::Engine::new();
+        if let Ok(e) = &mut engine {
             e.set_volume(lib.volume);
+            e.filter = lib.settings.audio_filter();
         }
         ctx.set_zoom_factor(lib.settings.ui_scale);
         let (tray_tx, tray_rx) = channel();
@@ -646,6 +648,15 @@ impl App {
                     home.save();
                     self.home = home;
                 }
+                Msg::Imported(title, tracks) => {
+                    self.busy.remove("import");
+                    let base = title.unwrap_or_else(|| "YouTube playlist".into());
+                    let name = (1..).map(|n| if n == 1 { base.clone() } else { format!("{base} {n}") }).find(|n| !self.lib.playlists.contains_key(n)).unwrap();
+                    self.toast(format!("Saved {} songs to {name}", tracks.len()));
+                    self.lib.playlists.insert(name.clone(), tracks);
+                    self.lib.save();
+                    self.set_view(View::Playlist(name));
+                }
                 Msg::StationMoved(generation, dead, found) => {
                     self.busy.remove("moved");
                     self.buffering = false;
@@ -1007,11 +1018,29 @@ impl App {
 
     fn lyrics(&mut self, ui: &mut Ui) {
         let Some(t) = self.current.clone() else { return };
-        let pos = self.position() + 0.3;
+        let offset = *self.lib.lyric_offsets.get(&t.key()).unwrap_or(&0.0);
+        let pos = self.position() + 0.3 - offset;
         let mut seek = None;
+        let mut nudge = 0.0;
         match self.lyrics.get(&t.key()) {
             None | Some(Err(_)) => {}
             Some(Ok(l)) => {
+                if l.synced {
+                    // lyrics files are often a little early or late: shift them per song
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            if icon_btn(ui, icon::PLUS, None, 28.0).on_hover_text("Show lyrics later").clicked() {
+                                nudge = 0.5;
+                            }
+                            let label = if offset == 0.0 { "Lyrics timing".to_string() } else { format!("{offset:+.1} s") };
+                            ui.label(RichText::new(label).font(FontId::monospace(12.0)).color(MUTED));
+                            if icon_btn(ui, icon::MINUS, None, 28.0).on_hover_text("Show lyrics earlier").clicked() {
+                                nudge = -0.5;
+                            }
+                        });
+                    });
+                }
                 let cur = l.synced.then(|| l.lines.iter().rposition(|(ts, _)| *ts <= pos)).flatten();
                 let changed = cur != self.lyric_line;
                 self.lyric_line = cur;
@@ -1032,7 +1061,7 @@ impl App {
                         let rich = RichText::new(line).font(FontId::new(if l.synced { 32.0 } else { 26.0 }, serif())).color(col);
                         let r = ui.add(egui::Label::new(rich).wrap().sense(if l.synced { Sense::click() } else { Sense::hover() }));
                         if l.synced && r.clicked() {
-                            seek = Some(*ts);
+                            seek = Some(*ts + offset);
                         }
                         if l.synced && r.hovered() && Some(i) != cur {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -1044,6 +1073,15 @@ impl App {
                     ui.add_space(ui.available_height() * 0.4 + 240.0);
                 });
             }
+        }
+        if nudge != 0.0 {
+            let next = ((offset + nudge) * 2.0).round() / 2.0;
+            if next == 0.0 {
+                self.lib.lyric_offsets.remove(&t.key());
+            } else {
+                self.lib.lyric_offsets.insert(t.key(), next);
+            }
+            self.lib.save();
         }
         if let Some(ts) = seek {
             self.seek(ts);
@@ -1239,8 +1277,19 @@ impl App {
                     if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                         self.search_youtube();
                     }
-                    if self.busy.contains("yt") || self.busy.contains("resolve") {
+                    if self.busy.contains("yt") || self.busy.contains("resolve") || self.busy.contains("import") {
                         ui.spinner();
+                    }
+                    // a pasted playlist link: keep it as a Sonavelt playlist
+                    let url = self.yt_query.trim().to_string();
+                    if url.starts_with("http")
+                        && url.contains("list=")
+                        && !self.yt.is_empty()
+                        && !self.busy.contains("import")
+                        && pill(ui, &format!("{}  Save as playlist", icon::PLAYLIST), white(26), TEXT).clicked()
+                    {
+                        let tracks = self.yt.clone();
+                        self.spawn("import", move || Msg::Imported(sources::youtube_playlist_title(&url), tracks));
                     }
                 });
                 ui.add_space(28.0);
@@ -1314,6 +1363,17 @@ impl App {
                     if pill(ui, &format!("{}  Add songs", icon::PLUS), white(26), TEXT).clicked() {
                         self.picker = Some(name.clone());
                         self.pick_query.clear();
+                    }
+                    if !list.is_empty() && icon_btn(ui, icon::EXPORT, None, 40.0).on_hover_text("Export as M3U").clicked() {
+                        let dir = dirs::audio_dir().or_else(dirs::home_dir).unwrap_or_default();
+                        let stem = name.replace(['/', '\\'], "-");
+                        // never overwrite a file that's already there
+                        let path =
+                            (1..).map(|n| dir.join(if n == 1 { format!("{stem}.m3u") } else { format!("{stem} {n}.m3u") })).find(|p| !p.exists()).unwrap();
+                        match std::fs::write(&path, library::to_m3u(&list)) {
+                            Ok(()) => self.toast(format!("Exported to {}", path.display())),
+                            Err(e) => self.toast(format!("Couldn't export: {e}")),
+                        }
                     }
                     ui.add_space(4.0);
                     if icon_btn(ui, icon::TRASH, None, 40.0).on_hover_text("Delete playlist").clicked() {
@@ -2324,6 +2384,12 @@ impl App {
                 segmented(ui, &mut s.ui_scale, &[(0.9, "90%"), (1.0, "100%"), (1.1, "110%"), (1.25, "125%")]);
             });
 
+            group(ui, "Sound");
+            row(ui, "Even out loudness", "Loud and quiet songs play at a similar level", |ui| toggle(ui, &mut s.level));
+            row(ui, "Equalizer", "Shape the sound", |ui| {
+                segmented(ui, &mut s.eq, &[(Eq::Off, "Off"), (Eq::Bass, "Bass"), (Eq::Vocal, "Vocal"), (Eq::Bright, "Bright")]);
+            });
+
             group(ui, "Playback");
             let tray = self.tray.is_some();
             let s = &mut self.lib.settings;
@@ -2425,6 +2491,18 @@ impl App {
             ui.add_space(40.0);
         });
         if self.lib.settings != before {
+            let filter = self.lib.settings.audio_filter();
+            if filter != before.audio_filter()
+                && let Ok(e) = &mut self.engine
+            {
+                e.filter = filter;
+                // hear it now: restart from the same spot (piped YouTube streams change on the next song)
+                if e.active() && e.seekable() {
+                    let live = self.current.as_ref().is_some_and(|t| t.is_radio());
+                    let at = if live { 0.0 } else { e.position() }; // a live stream just reconnects
+                    e.seek(at);
+                }
+            }
             if self.lib.settings.ui_scale != before.ui_scale {
                 ui.ctx().set_zoom_factor(self.lib.settings.ui_scale);
             }

@@ -76,6 +76,15 @@ pub enum Palette {
     Mono,
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub enum Eq {
+    #[default]
+    Off,
+    Bass,
+    Vocal,
+    Bright,
+}
+
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Settings {
@@ -86,11 +95,40 @@ pub struct Settings {
     pub beat: bool,
     pub ui_scale: f32,
     pub close_to_tray: bool,
+    /// Even out loudness between songs.
+    pub level: bool,
+    pub eq: Eq,
+}
+
+impl Settings {
+    /// The ffmpeg audio filter for the sound settings, if any.
+    pub fn audio_filter(&self) -> Option<String> {
+        let eq = match self.eq {
+            Eq::Off => None,
+            Eq::Bass => Some("bass=g=6:f=110"),
+            Eq::Vocal => Some("equalizer=f=250:t=q:w=1:g=-3,equalizer=f=3000:t=q:w=1:g=4"),
+            Eq::Bright => Some("treble=g=5:f=6000"),
+        };
+        // dynaudnorm adapts as it plays, so it works on live streams too, unlike two-pass loudnorm
+        let level = self.level.then_some("dynaudnorm=f=200:g=15");
+        let chain: Vec<&str> = [eq, level].into_iter().flatten().collect();
+        (!chain.is_empty()).then(|| chain.join(","))
+    }
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { background: Background::Aura, palette: Palette::Artwork, brightness: 0.55, motion: true, beat: true, ui_scale: 1.0, close_to_tray: true }
+        Self {
+            background: Background::Aura,
+            palette: Palette::Artwork,
+            brightness: 0.55,
+            motion: true,
+            beat: true,
+            ui_scale: 1.0,
+            close_to_tray: true,
+            level: true,
+            eq: Eq::Off,
+        }
     }
 }
 
@@ -109,6 +147,8 @@ pub struct Library {
     pub listened: HashMap<String, f64>,
     /// Songs your stations played while you listened, newest first: (station key, "Artist - Song").
     pub radio_songs: Vec<(String, String)>,
+    /// Per song: seconds to show synced lyrics later (negative: earlier).
+    pub lyric_offsets: HashMap<String, f64>,
 }
 
 /// What you've told Sonavelt you don't want, so recommendations stop offering it.
@@ -153,6 +193,7 @@ impl Default for Library {
             feedback: Feedback::default(),
             listened: HashMap::new(),
             radio_songs: vec![],
+            lyric_offsets: HashMap::new(),
         }
     }
 }
@@ -300,12 +341,42 @@ pub fn by_artist(t: &Track, a: &str) -> bool {
         || ["- ", ", ", "& ", "ft. ", "feat. ", "x "].iter().any(|p| title.contains(&format!("{p}{a}")))
 }
 
+/// A playlist as an M3U file other players open: files by path, YouTube and radio by URL.
+pub fn to_m3u(tracks: &[Track]) -> String {
+    let mut out = String::from("#EXTM3U\n");
+    for t in tracks {
+        let at = match &t.source {
+            Source::Local(p) => p.display().to_string(),
+            Source::YouTube(id) => format!("https://www.youtube.com/watch?v={id}"),
+            Source::Radio(url) => url.clone(),
+        };
+        let secs = t.duration.map_or(-1, |d| d.round() as i64); // -1: unknown length, per the format
+        out += &format!("#EXTINF:{secs},{} - {}\n{at}\n", t.artist, t.title);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn t(artist: &str, n: u32) -> Track {
         Track { title: format!("{artist}{n}"), artist: artist.into(), source: Source::YouTube(format!("{artist}{n}")), duration: None, art: None }
+    }
+
+    #[test]
+    fn m3u_export() {
+        let t = Track { title: "Runaway".into(), artist: "AURORA".into(), source: Source::YouTube("d_HlPboLRL8".into()), duration: Some(249.6), art: None };
+        assert_eq!(to_m3u(&[t]), "#EXTM3U\n#EXTINF:250,AURORA - Runaway\nhttps://www.youtube.com/watch?v=d_HlPboLRL8\n");
+    }
+
+    #[test]
+    fn sound_settings_become_one_filter_chain() {
+        let mut s = Settings { level: false, ..Default::default() };
+        assert_eq!(s.audio_filter(), None);
+        s.eq = Eq::Bass;
+        s.level = true;
+        assert_eq!(s.audio_filter().as_deref(), Some("bass=g=6:f=110,dynaudnorm=f=200:g=15"));
     }
 
     #[test]

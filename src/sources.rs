@@ -56,6 +56,13 @@ pub fn youtube_search(query: &str, n: usize) -> Result<Vec<Track>, String> {
     yt_flat(&[&target])
 }
 
+/// A YouTube playlist's title, for saving it under the same name.
+pub fn youtube_playlist_title(url: &str) -> Option<String> {
+    let out = Command::new("yt-dlp").args(["--flat-playlist", "-I", "1", "--no-warnings", "--print", "playlist_title", url]).output().ok()?;
+    let title = String::from_utf8_lossy(&out.stdout).lines().next()?.trim().to_string();
+    (!title.is_empty() && title != "NA").then(|| crate::library::plain_text(&title))
+}
+
 /// YouTube's own Mix for a video: the songs YouTube would play after it. Mixes never end, so
 /// only the first `n` are listed.
 pub fn youtube_mix(id: &str, n: usize) -> Result<Vec<Track>, String> {
