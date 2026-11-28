@@ -363,26 +363,46 @@ pub struct Lyrics {
 
 pub fn lyrics(t: &Track) -> Result<Lyrics, String> {
     let (artist, title) = clean_title(t);
-    let mut req = ureq::get("https://lrclib.net/api/search").set("User-Agent", UA);
-    req = if artist.is_empty() { req.query("q", &title) } else { req.query("track_name", &title).query("artist_name", &artist) };
-    let mut hits: Vec<Value> = req.call().map_err(|e| e.to_string())?.into_json().map_err(|e| e.to_string())?;
+    let search = |query: &[(&str, &str)]| -> Result<Vec<Value>, String> {
+        let mut req = ureq::get("https://lrclib.net/api/search").set("User-Agent", UA);
+        for (k, v) in query {
+            req = req.query(k, v);
+        }
+        req.call().map_err(|e| e.to_string())?.into_json().map_err(|e| e.to_string())
+    };
+    let mut hits = if artist.is_empty() { vec![] } else { search(&[("track_name", &title), ("artist_name", &artist)])? };
     if hits.is_empty() && !artist.is_empty() {
-        let q = format!("{artist} {title}");
-        hits = ureq::get("https://lrclib.net/api/search")
-            .set("User-Agent", UA)
-            .query("q", &q)
-            .call()
-            .map_err(|e| e.to_string())?
-            .into_json()
-            .map_err(|e| e.to_string())?;
+        hits = search(&[("q", &format!("{artist} {title}"))])?;
     }
-    if let Some(synced) = hits.iter().find_map(|h| h["syncedLyrics"].as_str()) {
+    // the channel isn't always the artist (lyrics channels, re-uploads)
+    if hits.is_empty() {
+        hits = search(&[("q", &title)])?;
+    }
+    let hit = best_lyrics(&hits, &artist, t.duration).ok_or("No lyrics found")?;
+    if let Some(synced) = hit["syncedLyrics"].as_str() {
         return Ok(Lyrics { synced: true, lines: parse_lrc(synced) });
     }
+    let plain = hit["plainLyrics"].as_str().unwrap_or_default();
+    Ok(Lyrics { synced: false, lines: plain.lines().map(|l| (0.0, l.to_string())).collect() })
+}
+
+/// The search hit that is this song: by the same artist or of the same length, synced if possible.
+/// A title-only search otherwise returns another artist's song with the same name.
+fn best_lyrics<'a>(hits: &'a [Value], artist: &str, duration: Option<f64>) -> Option<&'a Value> {
+    let want = crate::library::artist_key(artist);
     hits.iter()
-        .find_map(|h| h["plainLyrics"].as_str())
-        .map(|p| Lyrics { synced: false, lines: p.lines().map(|l| (0.0, l.to_string())).collect() })
-        .ok_or_else(|| "No lyrics found".into())
+        .enumerate()
+        .filter(|(_, h)| h["syncedLyrics"].is_string() || h["plainLyrics"].is_string())
+        .map(|(i, h)| {
+            let theirs = crate::library::artist_key(h["artistName"].as_str().unwrap_or_default());
+            let same_artist = want.is_empty() || (!theirs.is_empty() && (theirs.contains(&want) || want.contains(&theirs)));
+            // music videos often run a few seconds longer than the song
+            let same_length = matches!((duration, h["duration"].as_f64()), (Some(a), Some(b)) if (a - b).abs() < 8.0);
+            ((same_artist, same_length, h["syncedLyrics"].is_string(), std::cmp::Reverse(i)), h)
+        })
+        .filter(|((same_artist, same_length, ..), _)| *same_artist || *same_length)
+        .max_by_key(|(rank, _)| *rank)
+        .map(|(_, h)| h)
 }
 
 /// "Artist - Song (Official Video) [4K]" -> ("Artist", "Song")
@@ -400,7 +420,7 @@ fn clean_title(t: &Track) -> (String, String) {
     let s = s.replace("Official Video", "").replace("Lyrics", "");
     match s.split_once(" - ") {
         Some((a, b)) => (a.trim().into(), b.trim().into()),
-        None if matches!(t.source, Source::YouTube(_)) => (String::new(), s.trim().into()),
+        // an artist's own upload is often just "SONG", with the artist as the channel
         None => (t.artist.clone(), s.trim().into()),
     }
 }
@@ -473,11 +493,45 @@ mod tests {
         };
         assert_eq!(clean_title(&t), ("Daft Punk".into(), "One More Time".into()));
     }
+
+    #[test]
+    fn lyrics_pick_the_right_song() {
+        let hit = |artist: &str, duration: f64, synced: bool| {
+            let mut h = serde_json::json!({ "artistName": artist, "trackName": "Dirty Dog", "duration": duration, "plainLyrics": "words" });
+            if synced {
+                h["syncedLyrics"] = "[00:01.00] words".into();
+            }
+            h
+        };
+        let hits = [hit("JMSN", 262.0, true), hit("David Kushner", 181.0, false), hit("David Kushner", 181.0, true)];
+        let artist = |h: Option<&Value>| h.map(|h| (h["artistName"].as_str().unwrap().to_string(), h["syncedLyrics"].is_string()));
+        assert_eq!(artist(best_lyrics(&hits, "David Kushner", Some(183.0))), Some(("David Kushner".into(), true)));
+        // a lyrics channel uploaded it: the length still finds it
+        assert_eq!(artist(best_lyrics(&hits, "7clouds", Some(183.0))), Some(("David Kushner".into(), true)));
+        assert_eq!(artist(best_lyrics(&hits, "7clouds", Some(400.0))), None);
+        assert_eq!(artist(best_lyrics(&hits, "", None)), Some(("JMSN".into(), true)));
+    }
 }
 
 #[cfg(test)]
 mod net_tests {
     // Hits the network; run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn lyrics_for_an_upload_titled_only_with_the_song() {
+        let t = super::Track {
+            title: "DIRTY DOG".into(),
+            artist: "David Kushner".into(),
+            source: super::Source::YouTube("x".into()),
+            duration: Some(182.0),
+            art: None,
+        };
+        let l = super::lyrics(&t).unwrap();
+        assert!(l.synced);
+        let text: String = l.lines.iter().map(|(_, l)| l.to_lowercase()).collect();
+        assert!(text.contains("dirty dog"), "{text}");
+    }
+
     #[test]
     #[ignore]
     fn radio_search_drops_dead_streams() {
