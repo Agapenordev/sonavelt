@@ -166,6 +166,8 @@ struct App {
     toast: Option<(String, f64)>,
     last_time: f64,
     listen_clock: Instant,
+    /// Seconds heard of the current song, and whether that has already counted as a play.
+    session_heard: (f64, bool),
     marquee_phase: f32,
     logo: egui::TextureHandle,
     tray: Option<tray::Handle>,
@@ -253,6 +255,7 @@ impl App {
             toast: None,
             last_time: 0.0,
             listen_clock: Instant::now(),
+            session_heard: (0.0, false),
             lib,
         };
         app.scan();
@@ -392,6 +395,7 @@ impl App {
         self.radio_now = None;
         self.radio_polled = None;
         self.lib.played(&t);
+        self.session_heard = (0.0, false);
         // the starter page gives way to real picks once there's some listening to go on
         if !self.home.seeded && self.lib.recent.iter().filter(|t| !t.is_radio()).count() >= 3 {
             self.refresh_home();
@@ -517,7 +521,7 @@ impl App {
             }
             RowAct::Hide(i) => {
                 self.lib.hide(&list[i]);
-                self.toast("Got it. That song won't be in your picks");
+                self.toast("Hidden from your picks");
             }
             RowAct::HideArtist(i) => {
                 self.lib.hide_artist(&list[i]);
@@ -551,6 +555,7 @@ impl App {
                     self.lib.save();
                 }
                 View::Favorites => self.lib.toggle_fav(&list[i]),
+                View::Recent => self.lib.forget(&list[i]),
                 _ => {}
             },
         }
@@ -660,6 +665,14 @@ impl App {
         self.listen_clock = Instant::now();
         if let Some(t) = self.current.as_ref().filter(|_| self.engine.as_ref().is_ok_and(|e| e.active() && !e.paused())) {
             *self.lib.listened.entry(t.key()).or_default() += heard;
+            // a play counts after 30 s, or half of a shorter song; a quick test listen doesn't
+            self.session_heard.0 += heard;
+            let needed = t.duration.map_or(30.0, |d| (d / 2.0).min(30.0));
+            if !self.session_heard.1 && self.session_heard.0 >= needed {
+                self.session_heard.1 = true;
+                let t = t.clone();
+                self.lib.listened_to(&t);
+            }
         }
         self.last_time = now;
 
@@ -897,16 +910,20 @@ impl App {
                     if live {
                         let (r, _) = ui.allocate_exact_size(vec2(w, 16.0), Sense::hover());
                         let p = ui.painter();
-                        p.rect_filled(Rect::from_center_size(r.center(), vec2(r.width(), 3.0)), 2, white(30));
-                        let tag = Rect::from_center_size(r.center(), vec2(60.0, 18.0));
-                        p.rect_filled(tag, 9, accent);
-                        p.text(tag.center(), egui::Align2::CENTER_CENTER, "LIVE", FontId::monospace(10.0), INK);
+                        p.circle_filled(r.left_center() + vec2(4.0, 0.0), 3.5, accent);
+                        p.text(r.left_center() + vec2(14.0, 0.0), egui::Align2::LEFT_CENTER, "Live", FontId::proportional(12.0), TEXT2);
                     } else if let Some(f) = slider(ui, w, dur.map(|d| (pos / d) as f32).unwrap_or(0.0), false, accent)
                         && let Some(d) = dur
                     {
                         self.seek(f as f64 * d);
                     }
-                    let right = if self.buffering { "loading".into() } else { dur.map(fmt_time).unwrap_or("--:--".into()) };
+                    let right = if self.buffering {
+                        "loading".into()
+                    } else if live {
+                        String::new() // a stream has no end time
+                    } else {
+                        dur.map(fmt_time).unwrap_or("--:--".into())
+                    };
                     ui.add_sized([40.0, 16.0], egui::Label::new(mono(right)));
                 });
             });
@@ -1035,7 +1052,7 @@ impl App {
         let f = self.filter.to_lowercase();
         let idx: Vec<usize> =
             (0..list.len()).filter(|&i| f.is_empty() || format!("{} {}", list[i].title, list[i].artist).to_lowercase().contains(&f)).collect();
-        let removable = matches!(which, View::Queue | View::Playlist(_) | View::Favorites);
+        let removable = matches!(which, View::Queue | View::Playlist(_) | View::Favorites | View::Recent);
         let playing_idx = (which == View::Queue && self.current.is_some()).then_some(self.qpos);
         let names: Vec<String> = self.lib.playlists.keys().cloned().collect();
         let row = RowCtx {
@@ -1315,7 +1332,7 @@ impl eframe::App for App {
                     ui.set_opacity(a);
                     egui::Frame::new()
                         .fill(Color32::from_rgb(30, 30, 34))
-                        .corner_radius(20)
+                        .corner_radius(10)
                         .inner_margin(Margin::symmetric(18, 10))
                         .stroke(Stroke::new(1.0, HAIR))
                         .show(ui, |ui| {
@@ -1521,7 +1538,6 @@ fn card(ui: &mut Ui, card: Rect, ih: f32, i: usize, t: &Track, c: &RowCtx, cache
     let is_cur = c.is_current(i, t);
     let img = Rect::from_min_size(card.min, vec2(cw, ih));
     let p = ui.painter();
-    p.add(egui::Shadow { offset: [0, 8], blur: 24, spread: 0, color: black((40.0 + 40.0 * hover) as u8) }.as_shape(img, 14));
     art_img(p, cache, t, img, 14);
     if hover > 0.0 {
         p.rect_filled(img, 14, black((70.0 * hover) as u8));
@@ -1595,8 +1611,8 @@ fn pill(ui: &mut Ui, label: &str, fill: Color32, color: Color32) -> egui::Respon
     let h = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.15);
     let r2 = if resp.is_pointer_button_down_on() { r.shrink(1.0) } else { r };
     let p = ui.painter();
-    p.rect_filled(r2, 22, fill);
-    p.rect_filled(r2, 22, white((16.0 * h) as u8));
+    p.rect_filled(r2, 10, fill);
+    p.rect_filled(r2, 10, white((16.0 * h) as u8));
     p.text(r2.center(), egui::Align2::CENTER_CENTER, label, font, color);
     resp
 }
@@ -1608,9 +1624,9 @@ fn chip(ui: &mut Ui, label: &str, selected: bool) -> bool {
     let hov = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.15);
     let p = ui.painter();
     if selected {
-        p.rect_filled(r, 17, TEXT);
+        p.rect_filled(r, 8, TEXT);
     } else {
-        p.rect_filled(r, 17, white((16.0 + 14.0 * hov) as u8));
+        p.rect_filled(r, 8, white((16.0 + 14.0 * hov) as u8));
     }
     p.text(r.center(), egui::Align2::CENTER_CENTER, label, font, if selected { INK } else { TEXT });
     resp.clicked()
@@ -1775,7 +1791,7 @@ fn style(ctx: &egui::Context) {
     v.window_shadow = egui::Shadow { offset: [0, 12], blur: 32, spread: 0, color: black(120) };
     v.popup_shadow = v.window_shadow;
     for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open, &mut v.widgets.noninteractive] {
-        w.corner_radius = CornerRadius::same(12);
+        w.corner_radius = CornerRadius::same(8);
         w.bg_stroke = Stroke::NONE;
         w.expansion = 0.0;
     }
@@ -1899,11 +1915,7 @@ impl App {
     fn home_page(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                let meta = if self.busy.contains("home") {
-                    "Finding new music for you".to_string()
-                } else {
-                    format!("Picked from what you play · {}", self.home.age())
-                };
+                let meta = if self.busy.contains("home") { "Updating picks".to_string() } else { format!("Picked from what you play · {}", self.home.age()) };
                 self.header(ui, "Home", &meta);
             });
             ui.with_layout(egui::Layout::right_to_left(Align::Min), |ui| {
@@ -1936,7 +1948,7 @@ impl App {
             }
             if self.home.shelves.is_empty() && self.busy.contains("home") {
                 ui.add_space(24.0);
-                ui.label(RichText::new("Finding new music for you").font(FontId::new(24.0, serif())).color(MUTED));
+                ui.label(RichText::new("Updating picks").font(FontId::new(24.0, serif())).color(MUTED));
             }
             ui.add_space(24.0);
         });
@@ -2012,7 +2024,7 @@ impl App {
             p.rect_filled(r, 10, white((18.0 + 14.0 * h) as u8));
             let label = match tile {
                 Tile::Favorites => {
-                    p.rect_filled(art, egui::CornerRadius { nw: 10, sw: 10, ne: 0, se: 0 }, Color32::from_rgb(120, 22, 48));
+                    p.rect_filled(art, egui::CornerRadius { nw: 10, sw: 10, ne: 0, se: 0 }, FAVORITES_TILE);
                     p.text(art.center(), egui::Align2::CENTER_CENTER, egui_phosphor::fill::HEART, FontId::new(26.0, filled()), TEXT);
                     "Favorites".to_string()
                 }
@@ -2237,7 +2249,7 @@ impl App {
     }
 
     fn settings(&mut self, ui: &mut Ui) {
-        self.header(ui, "Settings", "Make it yours");
+        self.header(ui, "Settings", &format!("Version {}", updater::VERSION));
         let before = self.lib.settings.clone();
         let accent = self.aura.accent;
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
@@ -2424,7 +2436,7 @@ fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T, &st
     let font = FontId::proportional(14.0);
     let widths: Vec<f32> = options.iter().map(|(_, l)| ui.painter().layout_no_wrap(l.to_string(), font.clone(), TEXT).size().x + 28.0).collect();
     let (r, _) = ui.allocate_exact_size(vec2(widths.iter().sum::<f32>() + 8.0, 40.0), Sense::hover());
-    ui.painter().rect_filled(r, 20, white(18));
+    ui.painter().rect_filled(r, 10, white(18));
     let mut x = r.left() + 4.0;
     for ((v, label), w) in options.iter().zip(widths) {
         let cell = Rect::from_min_size(pos2(x, r.top() + 4.0), vec2(w, 32.0));
@@ -2433,9 +2445,9 @@ fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T, &st
         let sel = ui.ctx().animate_bool_with_time(resp.id, selected, 0.18);
         let p = ui.painter();
         if sel > 0.0 {
-            p.rect_filled(cell, 16, TEXT.gamma_multiply(sel));
+            p.rect_filled(cell, 6, TEXT.gamma_multiply(sel));
         } else if resp.hovered() {
-            p.rect_filled(cell, 16, white(14));
+            p.rect_filled(cell, 6, white(14));
         }
         p.text(cell.center(), egui::Align2::CENTER_CENTER, *label, font.clone(), lerp(TEXT, INK, sel));
         if resp.clicked() {
@@ -2451,9 +2463,9 @@ fn swatch(ui: &mut Ui, label: &str, dot: Color32, selected: bool) -> bool {
     let (r, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
     let h = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.15);
     let p = ui.painter();
-    p.rect_filled(r, 18, white((18.0 + 12.0 * h) as u8));
+    p.rect_filled(r, 8, white((18.0 + 12.0 * h) as u8));
     if selected {
-        p.rect_stroke(r, 18, Stroke::new(1.5, TEXT), egui::StrokeKind::Inside);
+        p.rect_stroke(r, 8, Stroke::new(1.5, TEXT), egui::StrokeKind::Inside);
     }
     p.circle_filled(r.left_center() + vec2(18.0, 0.0), 6.0, dot);
     p.text(r.left_center() + vec2(32.0, 0.0), egui::Align2::LEFT_CENTER, label, font, if selected { TEXT } else { TEXT2 });

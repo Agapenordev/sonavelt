@@ -235,11 +235,25 @@ impl Library {
         fb.hidden.contains(&t.key()) || fb.unliked.iter().any(|u| u.source == t.source) || fb.hidden_artists.iter().any(|a| by_artist(t, a))
     }
 
+    /// A song started: into the history. It only counts as a play once you've listened (`listened_to`).
     pub fn played(&mut self, t: &Track) {
-        *self.plays.entry(t.key()).or_default() += 1;
         self.recent.retain(|r| r.source != t.source);
         self.recent.insert(0, t.clone());
         self.recent.truncate(50);
+        self.save();
+    }
+
+    /// Remove a song from your history and everything it taught the recommendations.
+    pub fn forget(&mut self, t: &Track) {
+        self.recent.retain(|r| r.source != t.source);
+        self.plays.remove(&t.key());
+        self.listened.remove(&t.key());
+        self.save();
+    }
+
+    /// You listened long enough for it to count, like Spotify's 30 seconds.
+    pub fn listened_to(&mut self, t: &Track) {
+        *self.plays.entry(t.key()).or_default() += 1;
         self.save();
     }
 

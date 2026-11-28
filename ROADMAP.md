@@ -37,6 +37,14 @@ one matters to you, open an issue or add a thumbs-up to an existing one. Want to
   genres, weighted by listening time; skips, un-hearts, *Not interested*, *Don't recommend this
   artist* and ignored picks all teach it.
 
+## Done, coming in the next release
+
+- **Recommendations only learn from real listening.** A play counts after 30 seconds, and taste
+  comes from listening time, so testing a song for a few seconds doesn't teach anything.
+  *Remove* in Recently played erases a song from your history and your picks.
+- **Cleaner interface.** Buttons and chips sized like controls instead of pills, no drop shadows
+  on cards, a quiet *Live* label, plainer shelf titles and copy.
+
 ## Next
 
 - **Packages.** AUR, Flatpak, and a `.deb`/`.rpm`.

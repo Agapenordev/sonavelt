@@ -21,6 +21,8 @@ pub const HAIR: Color32 = white(22);
 pub const SELECTED: Color32 = white(26);
 
 pub const HEART_RED: Color32 = Color32::from_rgb(255, 59, 92);
+/// The Favorites quick tile: a deep version of the heart red.
+pub const FAVORITES_TILE: Color32 = Color32::from_rgb(120, 22, 48);
 
 pub fn filled() -> FontFamily {
     FontFamily::Name("filled".into())

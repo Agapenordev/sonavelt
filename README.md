@@ -32,7 +32,7 @@ and starts YouTube songs in about two seconds.
 
 **A home page that knows your taste**
 - Like Spotify's: quick tiles for your favorites, playlists and recent plays, then shelves of
-  picks. *Made for you*, *More like* the artists you play most, *Jump back in* and *Stations for you*.
+  picks. *Made for you*, *More like* the artists you play most, *Jump back in* and *Stations*.
 - Picks work like YouTube's home feed: your listening splits into interests (the songs you
   play, and the genres of your stations, weighted by listening time), each seeded from songs you
   love or songs your stations played, and filled from YouTube's own Mixes.

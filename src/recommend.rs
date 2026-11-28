@@ -28,8 +28,10 @@ const SONG_SEEDS: usize = 5;
 const GENRE_SEEDS: usize = 3;
 const MIX_LEN: usize = 15;
 const MAX_AGE_SECS: u64 = 6 * 3600;
-/// Seconds one play stands for when no listening time is recorded yet (older history).
+/// Seconds one play stands for in older history, recorded before listening time was.
 const PLAY_SECS: f64 = 180.0;
+/// A station needs this much listening before its genre becomes an interest.
+const STATION_SECS: f64 = 300.0;
 
 /// Genre families: radio-browser tags that belong together.
 const FAMILIES: &[(&str, &[&str])] = &[
@@ -115,8 +117,8 @@ fn now_secs() -> u64 {
 }
 
 fn cache_path() -> std::path::PathBuf {
-    // v3: built from interests; older caches came from favorites only
-    dirs::cache_dir().unwrap_or_default().join("sonavelt").join("home-v3.json")
+    // v4: listening-time taste and plainer shelf titles; older caches came from earlier rules
+    dirs::cache_dir().unwrap_or_default().join("sonavelt").join("home-v4.json")
 }
 
 impl Home {
@@ -153,11 +155,16 @@ fn who(t: &Track) -> String {
     }
 }
 
-/// Seconds listened, or plays standing in for older history recorded before time was tracked.
+/// Seconds you really listened. Older history has only play counts, and back then a play was
+/// counted on start, so one or two plays may have been a quick test: those count from three up.
 fn listened(lib: &Library, t: &Track) -> f64 {
-    let secs = *lib.listened.get(&t.key()).unwrap_or(&0.0);
-    let plays = *lib.plays.get(&t.key()).unwrap_or(&0) as f64;
-    secs.max(plays * PLAY_SECS)
+    match lib.listened.get(&t.key()) {
+        Some(secs) => *secs,
+        None => match *lib.plays.get(&t.key()).unwrap_or(&0) {
+            n if n >= 3 => n as f64 * PLAY_SECS,
+            _ => 0.0,
+        },
+    }
 }
 
 /// Name a song interest after the style its seeds share, the way YouTube labels a mix.
@@ -172,7 +179,7 @@ fn style_of(seeds: &[(Track, f64)]) -> &'static str {
     } else if share(&["remix", "mashup"]) {
         "Remixes"
     } else {
-        "Your sound"
+        "Like what you play"
     }
 }
 
@@ -180,24 +187,27 @@ pub fn taste(lib: &Library) -> Taste {
     let fb = &lib.feedback;
     let in_playlist: HashSet<String> = lib.playlists.values().flatten().map(Track::key).collect();
 
-    // songs: score each, keep those you've shown you like
-    let mut score: HashMap<String, (Track, f64)> = HashMap::new();
+    // songs: what counts is how much you listened, like watch time on YouTube. Starting a song
+    // (to test it, by accident) says nothing; recency only scales real listening.
+    let mut recency: HashMap<String, (Track, f64)> = HashMap::new();
     for (i, t) in lib.recent.iter().enumerate() {
-        score.entry(t.key()).or_insert_with(|| (t.clone(), 0.0)).1 += 1.5 * 0.9f64.powi(i as i32); // recent taste counts most
+        recency.entry(t.key()).or_insert_with(|| (t.clone(), 0.9f64.powi(i as i32)));
     }
     for t in lib.favorites.iter().chain(lib.playlists.values().flatten()) {
-        score.entry(t.key()).or_insert_with(|| (t.clone(), 0.0));
+        recency.entry(t.key()).or_insert_with(|| (t.clone(), 0.0));
     }
-    let mut songs: Vec<(Track, f64)> = score
+    let mut songs: Vec<(Track, f64)> = recency
         .into_values()
         .filter(|(t, _)| !t.is_radio() && !lib.dismissed(t))
-        .filter_map(|(t, mut s)| {
-            let skips = *fb.skips.get(&t.key()).unwrap_or(&0);
-            let secs = listened(lib, &t) - skips as f64 * PLAY_SECS;
-            let fav = lib.is_fav(&t);
-            s += (1.0 + secs.max(0.0) / 60.0).ln() + if fav { 2.5 } else { 0.0 } + if in_playlist.contains(&t.key()) { 1.0 } else { 0.0 };
-            // one play (maybe a skip) says little; a heart, a playlist or real listening says a lot
-            (fav || in_playlist.contains(&t.key()) || secs >= 2.0 * PLAY_SECS).then_some((t, s))
+        .filter_map(|(t, recent)| {
+            let len = t.duration.unwrap_or(200.0).max(60.0);
+            let skips = *fb.skips.get(&t.key()).unwrap_or(&0) as f64;
+            // full listens, each skip taking one away
+            let listens = ((listened(lib, &t) - skips * len) / len).max(0.0);
+            let (fav, pl) = (lib.is_fav(&t), in_playlist.contains(&t.key()));
+            let s = 2.0 * (1.0 + listens).ln() * (0.5 + 0.5 * recent) + if fav { 2.5 } else { 0.0 } + if pl { 1.0 } else { 0.0 };
+            // about one whole listen, a heart or a playlist: anything less is not a taste yet
+            (fav || pl || listens >= 0.9).then_some((t, s))
         })
         .collect();
     songs.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.title.cmp(&b.0.title)));
@@ -205,7 +215,7 @@ pub fn taste(lib: &Library) -> Taste {
     let picked: Vec<(Track, f64)> = songs.into_iter().filter(|(t, _)| artists.insert(who(t))).take(SONG_SEEDS).collect();
     let top = picked.first().map_or(1.0, |(_, s)| *s);
     let song_seeds: Vec<(Track, f64)> = picked.into_iter().map(|(t, s)| (t, 0.5 + 0.5 * s / top)).collect();
-    let song_time: f64 = song_seeds.iter().map(|(t, _)| listened(lib, t).max(PLAY_SECS * 3.0)).sum();
+    let song_time: f64 = song_seeds.iter().map(|(t, _)| listened(lib, t).max(PLAY_SECS)).sum();
 
     // stations: listening time per genre family, from their radio-browser tags
     let mut family_time = vec![0.0; FAMILIES.len()];
@@ -213,7 +223,10 @@ pub fn taste(lib: &Library) -> Taste {
     let mut tag_time: HashMap<String, f64> = HashMap::new();
     let mut seen_stations = HashSet::new();
     for t in lib.recent.iter().chain(&lib.favorites).filter(|t| t.is_radio() && !lib.dismissed(t) && seen_stations.insert(t.key())) {
-        let secs = listened(lib, t).max(PLAY_SECS);
+        let secs = listened(lib, t);
+        if secs < STATION_SECS {
+            continue; // tuned in for a moment: not an interest
+        }
         let Some((_, list)) = t.artist.rsplit_once(" · ") else { continue };
         let tags: Vec<String> = list.split(',').map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()).collect();
         for tag in &tags {
@@ -404,13 +417,13 @@ pub fn build(taste: Taste) -> Home {
         for (interest, (_, list)) in taste.interests.iter().zip(&ranked) {
             let rest: Vec<Track> = list.iter().filter(|t| used.insert(t.key())).take(12).cloned().collect();
             if rest.len() >= 6 {
-                shelves.push(Shelf { title: format!("{} for you", interest.title), subtitle: interest.subtitle.clone(), tracks: rest });
+                shelves.push(Shelf { title: interest.title.clone(), subtitle: interest.subtitle.clone(), tracks: rest });
             }
         }
     }
     let stations = taste.radio_tag.as_ref().and_then(|tag| {
         let found = sources::radio_search(tag, true).ok()?;
-        Some(Shelf { title: "Stations for you".into(), subtitle: format!("Because you listen to {tag}"), tracks: found.into_iter().take(12).collect() })
+        Some(Shelf { title: "Stations".into(), subtitle: format!("Because you listen to {tag}"), tracks: found.into_iter().take(12).collect() })
     });
     shelves.push(stations.unwrap_or_else(|| Shelf {
         title: "Stations to try".into(),
@@ -514,6 +527,20 @@ mod tests {
         lib.feedback.unliked.push(yt("d1", "Dan", 200.0));
         lib.favorites.clear();
         assert!(!song_seeds(&lib).contains(&"d1".into()), "un-hearted songs stop being seeds");
+    }
+
+    #[test]
+    fn a_test_listen_is_not_a_taste() {
+        let tried = yt("tried", "Tess", 200.0);
+        let loved = yt("loved", "Lou", 200.0);
+        let station = radio("dropin", "dance");
+        let mut lib = Library { recent: vec![tried.clone(), loved.clone(), station.clone()], ..Default::default() };
+        lib.listened = HashMap::from([(tried.key(), 20.0), (loved.key(), 210.0), (station.key(), 40.0)]);
+        lib.plays = HashMap::from([(tried.key(), 2)]); // old-style counts from starting it twice
+        let t = taste(&lib);
+        let seeds: Vec<String> = t.interests.iter().flat_map(|i| &i.seeds).map(|(s, _)| s.title.clone()).collect();
+        assert_eq!(seeds, ["loved"], "20 s is a test, one whole listen is a taste");
+        assert!(t.interests.iter().all(|i| i.title != "Dance & electronic"), "40 s of a station isn't an interest");
     }
 
     #[test]
