@@ -161,6 +161,8 @@ pub struct Feedback {
     pub hidden: Vec<String>,
     /// Artists marked "Don't recommend" (see `artist_key`).
     pub hidden_artists: Vec<String>,
+    /// Genres you blocked, lowercase ("phonk", "trap").
+    pub hidden_genres: Vec<String>,
     /// Times a song was skipped in its first 30 seconds.
     pub skips: HashMap<String, u32>,
     /// Times a pick was shown on Home. Picks you keep passing over fade, like on YouTube.
@@ -273,7 +275,10 @@ impl Library {
     /// Marked "Not interested", un-hearted, or by an artist you asked not to see.
     pub fn dismissed(&self, t: &Track) -> bool {
         let fb = &self.feedback;
-        fb.hidden.contains(&t.key()) || fb.unliked.iter().any(|u| u.source == t.source) || fb.hidden_artists.iter().any(|a| by_artist(t, a))
+        fb.hidden.contains(&t.key())
+            || fb.unliked.iter().any(|u| u.source == t.source)
+            || fb.hidden_artists.iter().any(|a| by_artist(t, a))
+            || fb.hidden_genres.iter().any(|g| in_genre(t, g))
     }
 
     /// A song started: into the history. It only counts as a play once you've listened (`listened_to`).
@@ -330,6 +335,19 @@ impl Library {
 
 /// Is `t` by the artist with key `a`? Checks the channel and the "Artist - Song" title, since
 /// lyric and fan channels upload under their own name.
+/// Is `t` in genre `g`? A station by its tags; any song or station by whole words in its title
+/// and artist line ("phonk" matches "Brazilian Phonk Mix", not "Phonky Town").
+pub fn in_genre(t: &Track, g: &str) -> bool {
+    let words = |s: &str| {
+        format!(
+            " {} ",
+            s.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { ' ' }).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ")
+        )
+    };
+    let g = words(g);
+    g.trim().len() >= 2 && words(&format!("{} {}", t.title, t.artist)).contains(&g)
+}
+
 pub fn by_artist(t: &Track, a: &str) -> bool {
     if a.len() < 3 {
         return false;
@@ -377,6 +395,20 @@ mod tests {
         s.eq = Eq::Bass;
         s.level = true;
         assert_eq!(s.audio_filter().as_deref(), Some("bass=g=6:f=110,dynaudnorm=f=200:g=15"));
+    }
+
+    #[test]
+    fn genres_match_whole_words_and_station_tags() {
+        let song =
+            |title: &str, artist: &str| Track { title: title.into(), artist: artist.into(), source: Source::YouTube(title.into()), duration: None, art: None };
+        let station =
+            Track { title: "Deep Space".into(), artist: "DE · deep house, lo-fi".into(), source: Source::Radio("http://x".into()), duration: None, art: None };
+        assert!(in_genre(&song("Brazilian PHONK mix", "x"), "phonk"));
+        assert!(!in_genre(&song("Phonky Town", "x"), "phonk"));
+        assert!(in_genre(&station, "deep house") && !in_genre(&station, "lofi") && in_genre(&station, "lo-fi"));
+        let mut lib = Library::default();
+        lib.feedback.hidden_genres.push("phonk".into());
+        assert!(lib.dismissed(&song("Sahara (Phonk)", "x")) && !lib.dismissed(&song("Runaway", "AURORA")));
     }
 
     #[test]

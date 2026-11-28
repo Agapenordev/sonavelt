@@ -81,6 +81,8 @@ enum Msg {
     RadioNow(u64, Option<String>),
     StationMoved(u64, String, Option<Track>),
     Imported(Option<String>, Vec<Track>),
+    /// A radio song looked up on YouTube: play it, or heart it when the flag is set.
+    HeardFound(String, Option<Track>, bool),
     Home(recommend::Home),
     UpdateChecked(bool, Result<Option<updater::Release>, String>),
     UpdateInstalled(Result<String, String>),
@@ -95,6 +97,7 @@ enum View {
     Radio,
     Favorites,
     Recent,
+    Heard,
     Queue,
     Playlist(String),
     Settings,
@@ -179,6 +182,9 @@ struct App {
     quitting: bool,
     picker: Option<String>,
     pick_query: String,
+    genre_input: String,
+    /// Private session: nothing played is remembered. Not saved, so it ends with the app, like Spotify's.
+    private: bool,
     cache_size: Option<u64>,
     update: Update,
     /// Our own path, read at startup: after an update swaps the file, the running process's
@@ -218,6 +224,8 @@ impl App {
             quitting: false,
             picker: None,
             pick_query: String::new(),
+            genre_input: String::new(),
+            private: false,
             cache_size: None,
             update: Update::Idle,
             exe: updater::current_exe(),
@@ -397,7 +405,9 @@ impl App {
         self.yt_fallback = false;
         self.radio_now = None;
         self.radio_polled = None;
-        self.lib.played(&t);
+        if !self.private {
+            self.lib.played(&t);
+        }
         self.session_heard = (0.0, false);
         // the starter page gives way to real picks once there's some listening to go on
         if !self.home.seeded && self.lib.recent.iter().filter(|t| !t.is_radio()).count() >= 3 {
@@ -444,7 +454,7 @@ impl App {
 
     fn next(&mut self, auto: bool) {
         // skipping in the first 30 seconds says you didn't want it
-        if let Some(t) = self.current.clone().filter(|t| !auto && !t.is_radio() && self.playing() && self.position() < 30.0) {
+        if let Some(t) = self.current.clone().filter(|t| !self.private && !auto && !t.is_radio() && self.playing() && self.position() < 30.0) {
             self.lib.skipped(&t);
         }
         if auto && self.repeat == Repeat::One {
@@ -648,6 +658,19 @@ impl App {
                     home.save();
                     self.home = home;
                 }
+                Msg::HeardFound(song, found, fav) => {
+                    self.busy.remove("heard");
+                    match found {
+                        Some(t) if fav => {
+                            if !self.lib.is_fav(&t) {
+                                self.lib.toggle_fav(&t);
+                            }
+                            self.toast(format!("Added to favorites: {}", t.title));
+                        }
+                        Some(t) => self.play_now(t),
+                        None => self.toast(format!("Couldn't find {song} on YouTube")),
+                    }
+                }
                 Msg::Imported(title, tracks) => {
                     self.busy.remove("import");
                     let base = title.unwrap_or_else(|| "YouTube playlist".into());
@@ -684,7 +707,7 @@ impl App {
                     self.busy.remove("icy");
                     // keep the last known song when one poll comes back empty
                     if generation == self.play_gen && now.is_some() && now != self.radio_now {
-                        if let (Some(song), Some(station)) = (&now, &self.current) {
+                        if let (Some(song), Some(station), false) = (&now, &self.current, self.private) {
                             self.lib.radio_songs.insert(0, (station.key(), song.clone()));
                             self.lib.radio_songs.truncate(200);
                         }
@@ -711,7 +734,7 @@ impl App {
         // wall clock, not the UI clock: this also runs with the window closed
         let heard = self.listen_clock.elapsed().as_secs_f64().min(1.0);
         self.listen_clock = Instant::now();
-        if let Some(t) = self.current.as_ref().filter(|_| self.engine.as_ref().is_ok_and(|e| e.active() && !e.paused())) {
+        if let Some(t) = self.current.as_ref().filter(|_| !self.private && self.engine.as_ref().is_ok_and(|e| e.active() && !e.paused())) {
             *self.lib.listened.entry(t.key()).or_default() += heard;
             // a play counts after 30 s, or half of a shorter song; a quick test listen doesn't
             self.session_heard.0 += heard;
@@ -830,11 +853,15 @@ impl App {
         }
         ui.add_space(24.0);
         section(ui, "Library");
-        let counts = [Some(self.lib.favorites.len()), None, Some(self.queue.len())];
-        for ((ic, label, v), count) in
-            [(icon::HEART, "Favorites", View::Favorites), (icon::CLOCK_COUNTER_CLOCKWISE, "Recently played", View::Recent), (icon::QUEUE, "Queue", View::Queue)]
-                .into_iter()
-                .zip(counts)
+        let counts = [Some(self.lib.favorites.len()), None, None, Some(self.queue.len())];
+        for ((ic, label, v), count) in [
+            (icon::HEART, "Favorites", View::Favorites),
+            (icon::CLOCK_COUNTER_CLOCKWISE, "Recently played", View::Recent),
+            (icon::BROADCAST, "Heard on radio", View::Heard),
+            (icon::QUEUE, "Queue", View::Queue),
+        ]
+        .into_iter()
+        .zip(counts)
         {
             if nav_item(ui, ic, label, count, self.view == v, None) {
                 self.set_view(v);
@@ -1009,6 +1036,11 @@ impl App {
                         self.sleep_at = None;
                     }
                 });
+                let tip = if self.private { "Private session is on: nothing you play is remembered" } else { "Private session" };
+                if icon_btn(ui, icon::EYE_SLASH, self.private.then_some(accent), 32.0).on_hover_text(tip).clicked() {
+                    self.private = !self.private;
+                    self.toast(if self.private { "Private session on. Nothing you play is remembered" } else { "Private session off" });
+                }
                 if icon_btn(ui, icon::QUEUE, (self.view == View::Queue).then_some(accent), 32.0).on_hover_text("Queue").clicked() {
                     self.set_view(View::Queue);
                 }
@@ -1102,7 +1134,7 @@ impl App {
             View::Radio => &self.radios,
             View::Favorites => &self.lib.favorites,
             View::Recent | View::NowPlaying => &self.lib.recent,
-            View::Settings | View::Home => &self.queue[..0],
+            View::Settings | View::Home | View::Heard => &self.queue[..0],
             View::Queue => &self.queue,
             View::Playlist(n) => self.lib.playlists.get(n).map(Vec::as_slice).unwrap_or(&[]),
         }
@@ -1110,7 +1142,11 @@ impl App {
     }
 
     fn list(&mut self, ui: &mut Ui, which: View) {
-        let list = self.track_source(&which);
+        let mut list = self.track_source(&which);
+        if which == View::Radio {
+            let blocked = &self.lib.feedback.hidden_genres;
+            list.retain(|t| !blocked.iter().any(|g| library::in_genre(t, g)));
+        }
         if list.is_empty() {
             let msg = match which {
                 View::Local => "No audio files in this folder yet",
@@ -1138,6 +1174,7 @@ impl App {
             names: &names,
             removable,
             suggested: false,
+            why: None,
             playing: self.playing(),
             level: self.level,
             accent: self.aura.accent,
@@ -1340,6 +1377,7 @@ impl App {
                 self.header(ui, "Recently played", "Your last 50");
                 self.list(ui, View::Recent);
             }
+            View::Heard => self.heard_page(ui),
             View::Queue => {
                 let meta = if self.smart { format!("{} tracks · smart shuffle on", self.queue.len()) } else { format!("{} tracks", self.queue.len()) };
                 self.header(ui, "Queue", &meta);
@@ -1453,6 +1491,8 @@ struct RowCtx<'a> {
     removable: bool,
     /// Recommendations: the menu offers "Not interested" and "Don't recommend".
     suggested: bool,
+    /// Why each pick is there (Home), shown on hover.
+    why: Option<&'a HashMap<String, String>>,
     playing: bool,
     level: f32,
     accent: Color32,
@@ -1667,6 +1707,10 @@ fn card(ui: &mut Ui, card: Rect, ih: f32, i: usize, t: &Track, c: &RowCtx, cache
         let at = resp.interact_pointer_pos().unwrap_or_default();
         act = Some(if heart.contains(at) { RowAct::Fav(i) } else { RowAct::Play(i) });
     }
+    let resp = match c.why.and_then(|w| w.get(&t.key())) {
+        Some(reason) if !heart.contains(resp.hover_pos().unwrap_or_default()) => resp.on_hover_text(reason),
+        _ => resp,
+    };
     context_menu(&resp, i, fav, c, &mut act);
     act
 }
@@ -2070,6 +2114,7 @@ impl App {
             names: &names,
             removable: false,
             suggested: true,
+            why: Some(&self.home.why),
             playing: self.playing(),
             level: self.level,
             accent: self.aura.accent,
@@ -2083,6 +2128,64 @@ impl App {
         }
         if let Some(a) = act {
             self.apply(a, &shelf.tracks);
+        }
+    }
+
+    /// Songs your stations played while you listened, ready to play or keep from YouTube.
+    fn heard_page(&mut self, ui: &mut Ui) {
+        let names: HashMap<String, String> =
+            self.lib.recent.iter().chain(&self.lib.favorites).filter(|t| t.is_radio()).map(|t| (t.key(), t.title.clone())).collect();
+        let mut seen = HashSet::new();
+        let songs: Vec<(String, String)> = self.lib.radio_songs.iter().filter(|(_, s)| seen.insert(s.to_lowercase())).cloned().collect();
+        self.header(ui, "Heard on radio", &format!("{} songs your stations played while you listened", songs.len()));
+        if songs.is_empty() {
+            ui.label(RichText::new("Play a station and its songs show up here").font(FontId::new(24.0, serif())).color(MUTED));
+            return;
+        }
+        let mut act: Option<(String, u8)> = None; // 0 play, 1 heart, 2 search
+        egui::ScrollArea::vertical().auto_shrink(false).show_rows(ui, ROW_H, songs.len(), |ui, range| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (station, song) in &songs[range] {
+                let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
+                let hover = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.15);
+                let p = ui.painter();
+                p.rect_filled(r, 12, white((13.0 * hover) as u8));
+                p.text(r.left_center() + vec2(26.0, 0.0), egui::Align2::RIGHT_CENTER, icon::BROADCAST, FontId::proportional(16.0), MUTED);
+                text(p, r.left_top() + vec2(44.0, 9.0), song, 15.0, TEXT, r.width() - 200.0, semibold());
+                let from = names.get(station).map_or("A station you played".to_string(), |n| format!("On {n}"));
+                text(p, r.left_top() + vec2(44.0, 29.0), &from, 13.0, TEXT2, r.width() - 200.0, FontFamily::Proportional);
+                let buttons = [(icon::PLAY, "Play from YouTube"), (icon::HEART, "Add to favorites"), (icon::MAGNIFYING_GLASS, "Search on YouTube")];
+                let pointer = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
+                for (n, (ic, _)) in buttons.iter().enumerate() {
+                    let c = pos2(r.right() - 24.0 - 36.0 * (2 - n) as f32, r.center().y);
+                    let col = if pointer.distance(c) < 16.0 { TEXT } else { TEXT2.gamma_multiply(0.4 + 0.6 * hover) };
+                    p.text(c, egui::Align2::CENTER_CENTER, *ic, FontId::proportional(17.0), col);
+                }
+                let pick = buttons.iter().enumerate().find(|(n, _)| pointer.distance(pos2(r.right() - 24.0 - 36.0 * (2 - n) as f32, r.center().y)) < 16.0);
+                let resp = match pick {
+                    Some((_, (_, tip))) => resp.on_hover_text(*tip),
+                    None => resp,
+                };
+                if resp.clicked() {
+                    act = Some((song.clone(), pick.map_or(0, |(n, _)| n as u8)));
+                }
+            }
+        });
+        match act {
+            Some((song, 2)) => {
+                self.yt_query = song;
+                self.search_youtube();
+                self.set_view(View::YouTube);
+            }
+            Some((song, n)) => {
+                let fav = n == 1;
+                self.spawn("heard", move || {
+                    let found =
+                        sources::youtube_search(&song, 3).ok().and_then(|r| r.into_iter().find(|t| t.duration.is_some_and(|d| (60.0..=600.0).contains(&d))));
+                    Msg::HeardFound(song, found, fav)
+                });
+            }
+            None => {}
         }
     }
 
@@ -2453,10 +2556,40 @@ impl App {
                 reset = ui.button("Reset").clicked();
             });
             if reset {
-                self.lib.feedback = Default::default();
+                // keep blocked genres: that's a setting, not something the picks learned
+                let genres = std::mem::take(&mut self.lib.feedback.hidden_genres);
+                self.lib.feedback = library::Feedback { hidden_genres: genres, ..Default::default() };
                 self.lib.save();
                 self.refresh_home();
                 self.toast("Recommendations reset");
+            }
+            let mut genres_changed = false;
+            row(ui, "Blocked genres", "Never recommended, and hidden from radio lists", |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    let mut remove = None;
+                    for (i, g) in self.lib.feedback.hidden_genres.iter().enumerate() {
+                        if chip(ui, &format!("{g}  {}", icon::X), false) {
+                            remove = Some(i);
+                        }
+                    }
+                    if let Some(i) = remove {
+                        self.lib.feedback.hidden_genres.remove(i);
+                        genres_changed = true;
+                    }
+                    let r = ui.add(input(&mut self.genre_input, &format!("{}  Block a genre", icon::PROHIBIT), 180.0, 13.0));
+                    let g = self.genre_input.trim().to_lowercase();
+                    if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && g.len() >= 2 {
+                        if !self.lib.feedback.hidden_genres.contains(&g) {
+                            self.lib.feedback.hidden_genres.push(g);
+                            genres_changed = true;
+                        }
+                        self.genre_input.clear();
+                    }
+                });
+            });
+            if genres_changed {
+                self.lib.save();
+                self.refresh_home();
             }
 
             group(ui, "Storage");

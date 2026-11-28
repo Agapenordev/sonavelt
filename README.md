@@ -37,7 +37,12 @@ and starts YouTube songs in about two seconds.
   play, and the genres of your stations, weighted by listening time), each seeded from songs you
   love or songs your stations played, and filled from YouTube's own Mixes.
 - It learns from you: skips, un-hearted songs, *Not interested*, *Don't recommend this artist*,
-  and picks you keep passing over all push things down.
+  and picks you keep passing over all push things down. Only real listening counts: a song you
+  test for a few seconds teaches nothing.
+- **Block whole genres** (phonk, trap, anything): they're never recommended and drop out of radio
+  lists. Most players can't do this at all.
+- **Why this pick?** Hover a pick to see what it came from: "Because you play Runaway".
+- **Private session:** listen without anything being remembered.
 
 **Listen to anything**
 - **YouTube:** search for any song, mix or live set, or paste a video or playlist link. Songs
@@ -57,7 +62,8 @@ and starts YouTube songs in about two seconds.
 **Plays well with your desktop**
 - Media keys, the lock screen and desktop media widgets control Sonavelt and show the current song
   with its artwork (MPRIS).
-- Radio stations show the song they're playing, with a button to find it on YouTube.
+- Radio stations show the song they're playing, with a button to find it on YouTube, and
+  **Heard on radio** keeps every song your stations played while you listened, to play or heart.
 - Local files use their real tags for title, artist and length.
 
 **Lyrics**

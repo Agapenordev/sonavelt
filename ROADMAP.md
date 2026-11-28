@@ -50,6 +50,9 @@ one matters to you, open an issue or add a thumbs-up to an existing one. Want to
 - **Playlists in and out.** Save a pasted YouTube playlist as a Sonavelt playlist; export any
   playlist as M3U.
 - **Lyrics timing nudge** for lyrics that run early or late, remembered per song.
+- **Block genres.** Blocked genres are never recommended and drop out of radio lists.
+- **Heard on radio.** Every song your stations played while you listened, to play or heart.
+- **Private session**, and **why this pick?** on every recommendation.
 
 ## Next
 

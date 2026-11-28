@@ -18,7 +18,7 @@
 //!
 //! Results are cached, so Home opens instantly and refreshes in the background.
 
-use crate::library::{Library, Source, Track, artist_key, by_artist};
+use crate::library::{Library, Source, Track, artist_key, by_artist, in_genre};
 use crate::sources;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -81,6 +81,9 @@ pub struct Home {
     /// Built from your listening (false: the starter page for a new library).
     #[serde(default)]
     pub seeded: bool,
+    /// Why each pick is there, by track key ("Because you play Runaway").
+    #[serde(default)]
+    pub why: HashMap<String, String>,
 }
 
 struct Interest {
@@ -103,6 +106,8 @@ pub struct Taste {
     known: HashSet<String>,
     /// Artists you asked not to see.
     blocked: Vec<String>,
+    /// Genres you blocked.
+    genres: Vec<String>,
     /// Artists of songs you un-hearted: still possible, but pushed down.
     cooled: Vec<String>,
     /// Times each pick was shown on Home.
@@ -117,8 +122,8 @@ fn now_secs() -> u64 {
 }
 
 fn cache_path() -> std::path::PathBuf {
-    // v4: listening-time taste and plainer shelf titles; older caches came from earlier rules
-    dirs::cache_dir().unwrap_or_default().join("sonavelt").join("home-v4.json")
+    // v5: picks carry their reasons; older caches have none
+    dirs::cache_dir().unwrap_or_default().join("sonavelt").join("home-v5.json")
 }
 
 impl Home {
@@ -298,7 +303,7 @@ pub fn taste(lib: &Library) -> Taste {
     let cooled = fb.unliked.iter().map(|t| artist_key(&t.artist)).filter(|a| !loved.contains(a)).collect();
     let heard = lib.recent.iter().chain(&lib.favorites).map(who).collect();
     let radio_tag = tag_time.into_iter().max_by(|a, b| a.1.total_cmp(&b.1).then(b.0.cmp(&a.0))).map(|(t, _)| t);
-    Taste { interests, known, blocked: fb.hidden_artists.clone(), cooled, shown: fb.impressions.clone(), heard, radio_tag }
+    Taste { interests, known, blocked: fb.hidden_artists.clone(), genres: fb.hidden_genres.clone(), cooled, shown: fb.impressions.clone(), heard, radio_tag }
 }
 
 /// Songs only, no hour-long compilations or 20-second clips.
@@ -307,10 +312,12 @@ fn song_length(t: &Track) -> bool {
 }
 
 /// Combine one interest's weighted mixes into a ranked list of new songs.
-fn rank(mixes: &[(f64, Vec<Track>)], taste: &Taste) -> Vec<Track> {
+/// Combine one interest's weighted mixes into a ranked list of new songs, each with the reason
+/// it was picked (the seed that pointed to it most strongly).
+fn rank(mixes: &[(f64, String, Vec<Track>)], taste: &Taste) -> Vec<(Track, String)> {
     // unfamiliar artists: the most times any of their songs was shown to you without a play
     let mut artist_shown: HashMap<String, u32> = HashMap::new();
-    for t in mixes.iter().flat_map(|(_, m)| m) {
+    for t in mixes.iter().flat_map(|(_, _, m)| m) {
         let a = who(t);
         if !taste.heard.contains(&a) {
             let n = artist_shown.entry(a).or_default();
@@ -319,15 +326,22 @@ fn rank(mixes: &[(f64, Vec<Track>)], taste: &Taste) -> Vec<Track> {
     }
 
     let mut score: HashMap<String, (Track, f64)> = HashMap::new();
-    for (weight, mix) in mixes {
+    let mut why: HashMap<String, (f64, &str)> = HashMap::new();
+    for (weight, reason, mix) in mixes {
         for (pos, t) in mix.iter().take(MIX_LEN).enumerate() {
-            if taste.known.contains(&t.key()) || !song_length(t) || taste.blocked.iter().any(|a| by_artist(t, a)) {
+            if taste.known.contains(&t.key()) || !song_length(t) || taste.blocked.iter().any(|a| by_artist(t, a)) || taste.genres.iter().any(|g| in_genre(t, g))
+            {
                 continue;
             }
             let cooled = if taste.cooled.iter().any(|a| by_artist(t, a)) { 0.3 } else { 1.0 };
             // shown and passed over: the song fades fast, an unfamiliar artist a little slower
             let ignored = 0.6f64.powi(*taste.shown.get(&t.key()).unwrap_or(&0) as i32) * 0.8f64.powi(*artist_shown.get(&who(t)).unwrap_or(&0) as i32);
-            score.entry(t.key()).or_insert_with(|| (t.clone(), 0.0)).1 += weight * cooled * ignored / (1.0 + 0.12 * pos as f64);
+            let s = weight * cooled * ignored / (1.0 + 0.12 * pos as f64);
+            score.entry(t.key()).or_insert_with(|| (t.clone(), 0.0)).1 += s;
+            let best = why.entry(t.key()).or_insert((0.0, reason));
+            if s > best.0 {
+                *best = (s, reason);
+            }
         }
     }
     let mut ranked: Vec<(Track, f64)> = score.into_values().collect();
@@ -340,7 +354,10 @@ fn rank(mixes: &[(f64, Vec<Track>)], taste: &Taste) -> Vec<Track> {
             *n += 1;
             *n <= 2
         })
-        .map(|(t, _)| t)
+        .map(|(t, _)| {
+            let reason = why.get(&t.key()).map_or("", |(_, r)| r).to_string();
+            (t, reason)
+        })
         .take(28)
         .collect()
 }
@@ -374,11 +391,15 @@ fn blend(ranked: &[(f64, Vec<Track>)], n: usize) -> Vec<Track> {
 /// Build the Home shelves. Blocking and networked: run it on a worker thread.
 pub fn build(taste: Taste) -> Home {
     let mut shelves = Vec::new();
+    let mut home_why = HashMap::new();
     let seeded = !taste.interests.is_empty();
     if !seeded {
         // nothing to go on yet: something to start with
         if let Ok(popular) = sources::youtube_search("top hits this week", 20) {
-            let tracks: Vec<Track> = popular.into_iter().filter(|t| song_length(t) && !taste.blocked.iter().any(|a| by_artist(t, a))).collect();
+            let tracks: Vec<Track> = popular
+                .into_iter()
+                .filter(|t| song_length(t) && !taste.blocked.iter().any(|a| by_artist(t, a)) && !taste.genres.iter().any(|g| in_genre(t, g)))
+                .collect();
             shelves.push(Shelf {
                 title: "Popular right now".into(),
                 subtitle: "Heart a few songs or listen a while and this page learns your taste".into(),
@@ -387,19 +408,25 @@ pub fn build(taste: Taste) -> Home {
         }
     } else {
         // every interest's seeds and mixes, all in parallel
-        let ranked: Vec<(f64, Vec<Track>)> = std::thread::scope(|s| {
+        let ranked: Vec<(f64, Vec<(Track, String)>)> = std::thread::scope(|s| {
             let jobs: Vec<_> = taste
                 .interests
                 .iter()
                 .map(|interest| {
                     let taste = &taste;
                     s.spawn(move || {
-                        let mut seeds = interest.seeds.clone();
+                        let short = |t: &Track| t.title.split(" (").next().unwrap_or(&t.title).trim().to_string();
+                        let mut seeds: Vec<(Track, f64, String)> =
+                            interest.seeds.iter().map(|(t, w)| (t.clone(), *w, format!("Because you play {}", short(t)))).collect();
                         if !interest.stations.is_empty() {
-                            seeds.extend(station_seeds(interest).into_iter().map(|t| (t, 0.8)));
+                            let family = interest.title.to_lowercase();
+                            seeds.extend(station_seeds(interest).into_iter().map(|t| {
+                                let reason = format!("Because your {family} stations played {}", short(&t));
+                                (t, 0.8, reason)
+                            }));
                         }
-                        let mixes: Vec<(f64, Vec<Track>)> = std::thread::scope(|s2| {
-                            let jobs: Vec<_> = seeds.iter().map(|(t, w)| s2.spawn(move || (*w, mix_for(t)))).collect();
+                        let mixes: Vec<(f64, String, Vec<Track>)> = std::thread::scope(|s2| {
+                            let jobs: Vec<_> = seeds.iter().map(|(t, w, why)| s2.spawn(move || (*w, why.clone(), mix_for(t)))).collect();
                             jobs.into_iter().filter_map(|j| j.join().ok()).collect()
                         });
                         (interest.weight, rank(&mixes, taste))
@@ -409,6 +436,9 @@ pub fn build(taste: Taste) -> Home {
             jobs.into_iter().map(|j| j.join().unwrap_or_default()).collect()
         });
 
+        let why: HashMap<String, String> = ranked.iter().flat_map(|(_, l)| l).filter(|(_, r)| !r.is_empty()).map(|(t, r)| (t.key(), r.clone())).collect();
+        let ranked: Vec<(f64, Vec<Track>)> = ranked.into_iter().map(|(w, l)| (w, l.into_iter().map(|(t, _)| t).collect())).collect();
+        home_why = why;
         let made = blend(&ranked, 16);
         let mut used: HashSet<String> = made.iter().map(Track::key).collect();
         if !made.is_empty() {
@@ -430,7 +460,7 @@ pub fn build(taste: Taste) -> Home {
         subtitle: "Hand-picked internet radio".into(),
         tracks: sources::curated_radios(),
     }));
-    Home { made_at: now_secs(), shelves, seeded }
+    Home { made_at: now_secs(), shelves, seeded, why: home_why }
 }
 
 /// Seed songs for a genre interest: songs heard on its stations, topped up with what those
@@ -489,6 +519,7 @@ mod tests {
             interests: vec![],
             known: known.iter().map(|k| yt(k, "", 0.0).key()).collect(),
             blocked: blocked.iter().map(|s| s.to_string()).collect(),
+            genres: vec![],
             cooled: cooled.iter().map(|s| s.to_string()).collect(),
             shown: shown.iter().map(|(k, n)| (yt(k, "", 0.0).key(), *n)).collect(),
             heard: HashSet::new(),
@@ -580,11 +611,12 @@ mod tests {
         let mixes = vec![
             (
                 1.0,
+                String::new(),
                 vec![yt("old", "X", 200.0), yt("both", "Y", 200.0), yt("one", "Zed", 200.0), yt("long", "L", 3600.0), yt("Samara - Yammi", "7clouds", 200.0)],
             ),
-            (1.0, vec![yt("both", "Y", 200.0), yt("two", "W", 200.0)]),
+            (1.0, String::new(), vec![yt("both", "Y", 200.0), yt("two", "W", 200.0)]),
         ];
-        let r: Vec<String> = rank(&mixes, &taste_with(&["old"], &["samara"], &[], &[])).into_iter().map(|t| t.title).collect();
+        let r: Vec<String> = rank(&mixes, &taste_with(&["old"], &["samara"], &[], &[])).into_iter().map(|(t, _)| t.title).collect();
         assert_eq!(r[0], "both", "in two mixes ranks first: {r:?}");
         for gone in ["old", "long", "Samara - Yammi"] {
             assert!(!r.contains(&gone.to_string()), "{gone} should be dropped: {r:?}");
@@ -594,19 +626,30 @@ mod tests {
     #[test]
     fn rank_weights_seeds_cools_unliked_and_fades_ignored() {
         let mixes = vec![
-            (1.0, vec![yt("strong", "Ann", 200.0)]),
-            (0.5, vec![yt("weak", "Bob", 200.0)]),
-            (1.0, vec![yt("cool", "Cat Officiel", 200.0)]),
-            (1.0, vec![yt("ignored", "Billie Eilish", 200.0)]),
+            (1.0, String::new(), vec![yt("strong", "Ann", 200.0)]),
+            (0.5, String::new(), vec![yt("weak", "Bob", 200.0)]),
+            (1.0, String::new(), vec![yt("cool", "Cat Officiel", 200.0)]),
+            (1.0, String::new(), vec![yt("ignored", "Billie Eilish", 200.0)]),
         ];
-        let r: Vec<String> = rank(&mixes, &taste_with(&[], &[], &["cat"], &[("ignored", 3)])).into_iter().map(|t| t.title).collect();
+        let r: Vec<String> = rank(&mixes, &taste_with(&[], &[], &["cat"], &[("ignored", 3)])).into_iter().map(|(t, _)| t.title).collect();
         assert_eq!(r, ["strong", "weak", "cool", "ignored"]);
+    }
+
+    #[test]
+    fn each_pick_keeps_the_seed_that_chose_it() {
+        let mixes = vec![
+            (0.9, "Because you play Runaway".to_string(), vec![yt("pick", "Ann", 200.0)]),
+            (0.7, "Because you play Daylight".to_string(), vec![yt("x", "Bob", 200.0), yt("pick", "Ann", 200.0)]),
+        ];
+        let r = rank(&mixes, &taste_with(&[], &[], &[], &[]));
+        let pick = r.iter().find(|(t, _)| t.title == "pick").unwrap();
+        assert_eq!(pick.1, "Because you play Runaway", "first in a 0.9 mix beats second in a 0.7 mix");
     }
 
     #[test]
     fn rank_caps_each_artist_at_two() {
         let mix: Vec<Track> = (0..5).map(|i| yt(&format!("s{i}"), "Same Artist - Topic", 200.0)).collect();
-        assert_eq!(rank(&[(1.0, mix)], &taste_with(&[], &[], &[], &[])).len(), 2);
+        assert_eq!(rank(&[(1.0, String::new(), mix)], &taste_with(&[], &[], &[], &[])).len(), 2);
     }
 
     #[test]
