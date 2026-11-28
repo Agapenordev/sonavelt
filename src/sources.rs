@@ -281,25 +281,59 @@ pub fn radio_search(query: &str, by_tag: bool) -> Result<Vec<Track>, String> {
             .query("limit", "80")
     };
     let list: Vec<Value> = req.set("User-Agent", UA).call().map_err(|e| e.to_string())?.into_json().map_err(|e| e.to_string())?;
-    Ok(list
-        .iter()
-        .filter_map(|s| {
-            let url = s["url_resolved"].as_str().filter(|u| !u.is_empty())?;
-            let tags: Vec<&str> = s["tags"].as_str().unwrap_or("").split(',').filter(|t| !t.is_empty()).take(3).collect();
-            let country = s["countrycode"].as_str().unwrap_or("");
-            Some(Track {
-                title: s["name"].as_str()?.trim().to_string(),
-                artist: [country.to_string(), tags.join(", ")].into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" · "),
-                source: Source::Radio(url.to_string()),
-                duration: None,
-                // no logo listed: the station website's icon is the next best thing
-                art: s["favicon"].as_str().filter(|f| f.starts_with("http")).map(str::to_string).or_else(|| {
-                    let host = s["homepage"].as_str()?.split("://").nth(1)?.split(['/', ':', '?']).next()?;
-                    Some(format!("https://www.google.com/s2/favicons?domain={host}&sz=128"))
-                }),
-            })
-        })
-        .collect())
+    let stations: Vec<Track> = list.iter().filter_map(station).collect();
+    // radio-browser still lists some streams that have moved or died; check them all at once
+    let alive: Vec<bool> = std::thread::scope(|s| {
+        let jobs: Vec<_> = stations.iter().map(|t| s.spawn(move || stream_alive(&t.source))).collect();
+        jobs.into_iter().map(|j| j.join().unwrap_or(None) != Some(false)).collect()
+    });
+    Ok(stations.into_iter().zip(alive).filter_map(|(t, ok)| ok.then_some(t)).collect())
+}
+
+fn station(s: &Value) -> Option<Track> {
+    let url = s["url_resolved"].as_str().filter(|u| !u.is_empty())?;
+    let tags: Vec<&str> = s["tags"].as_str().unwrap_or("").split(',').filter(|t| !t.is_empty()).take(3).collect();
+    let country = s["countrycode"].as_str().unwrap_or("");
+    // logo candidates, best first: the listed logo, then the station's website to find one on
+    let art: Vec<&str> = [s["favicon"].as_str(), s["homepage"].as_str()].into_iter().flatten().filter(|u| u.starts_with("http")).collect();
+    Some(Track {
+        title: s["name"].as_str()?.trim().to_string(),
+        artist: [country.to_string(), tags.join(", ")].into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" · "),
+        source: Source::Radio(url.to_string()),
+        duration: None,
+        art: (!art.is_empty()).then(|| art.join(" ")),
+    })
+}
+
+/// Does this stream answer? `Some(false)` only when it surely won't (an HTTP error, no such
+/// host, refused); slow or odd servers are given the benefit of the doubt.
+fn stream_alive(source: &Source) -> Option<bool> {
+    let Source::Radio(url) = source else { return Some(true) };
+    match ureq::get(url).set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) sonavelt/0.1").timeout(std::time::Duration::from_secs(5)).call() {
+        Ok(_) => Some(true),
+        Err(ureq::Error::Status(code, _)) => Some(code < 400),
+        Err(ureq::Error::Transport(t)) => match t.kind() {
+            ureq::ErrorKind::Dns | ureq::ErrorKind::ConnectionFailed => Some(false),
+            _ => None,
+        },
+    }
+}
+
+/// A working stream for a station whose address stopped answering: radio-browser often lists
+/// the same station more than once, under its old and new addresses.
+pub fn station_moved(name: &str, dead: &str) -> Option<Track> {
+    let list: Vec<Value> = ureq::get("https://de1.api.radio-browser.info/json/stations/search")
+        .set("User-Agent", UA)
+        .query("name", name)
+        .query("name_exact", "true")
+        .query("hidebroken", "true")
+        .query("order", "votes")
+        .query("reverse", "true")
+        .call()
+        .ok()?
+        .into_json()
+        .ok()?;
+    list.iter().filter_map(station).filter(|t| t.source != Source::Radio(dead.to_string())).find(|t| stream_alive(&t.source) == Some(true))
 }
 
 pub struct Lyrics {
@@ -424,6 +458,19 @@ mod tests {
 #[cfg(test)]
 mod net_tests {
     // Hits the network; run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn radio_search_drops_dead_streams() {
+        let found = super::radio_search("lofi", true).unwrap();
+        eprintln!("{} live lofi stations", found.len());
+        assert!(found.len() > 10);
+        let dead = ["stream.0nlineradio.com/lo-fi", "0nlineradio.radioho.st/0r-lo-fi", "stream.epic-lounge.com/workday-lounge"];
+        for t in &found {
+            let super::Source::Radio(url) = &t.source else { continue };
+            assert!(!dead.iter().any(|d| url.contains(d)), "dead stream listed: {url}");
+        }
+    }
+
     #[test]
     #[ignore]
     fn radio_now_from_live_stations() {

@@ -79,6 +79,7 @@ enum Msg {
     Lyrics(String, Result<Lyrics, String>),
     Recs(Vec<Track>),
     RadioNow(u64, Option<String>),
+    StationMoved(u64, String, Option<Track>),
     Home(recommend::Home),
     UpdateChecked(bool, Result<Option<updater::Release>, String>),
     UpdateInstalled(Result<String, String>),
@@ -414,6 +415,19 @@ impl App {
     }
 
     /// The stream failed (YouTube refuses one now and then): retry once as a full download.
+    /// A station stopped answering: look for where it moved, once per play.
+    fn station_fallback(&mut self) -> bool {
+        let Some(t) = self.current.clone().filter(|t| t.is_radio()) else { return false };
+        let Source::Radio(dead) = t.source else { return false };
+        if std::mem::replace(&mut self.yt_fallback, true) {
+            return false;
+        }
+        self.buffering = true;
+        let generation = self.play_gen;
+        self.spawn("moved", move || Msg::StationMoved(generation, dead.clone(), sources::station_moved(&t.title, &dead)));
+        true
+    }
+
     fn youtube_fallback(&mut self) -> bool {
         let Some(Source::YouTube(id)) = self.current.as_ref().map(|t| t.source.clone()) else { return false };
         if self.yt_fallback {
@@ -632,6 +646,29 @@ impl App {
                     home.save();
                     self.home = home;
                 }
+                Msg::StationMoved(generation, dead, found) => {
+                    self.busy.remove("moved");
+                    self.buffering = false;
+                    match found.filter(|_| generation == self.play_gen) {
+                        Some(new) => {
+                            // fix it everywhere it's saved, so it keeps working
+                            let old = Source::Radio(dead);
+                            for t in [&mut self.lib.favorites, &mut self.lib.recent].into_iter().chain(self.lib.playlists.values_mut()).flatten() {
+                                if t.source == old {
+                                    t.source = new.source.clone();
+                                    t.art = t.art.take().or(new.art.clone());
+                                }
+                            }
+                            self.lib.save();
+                            let mut t = self.current.clone().unwrap_or(new.clone());
+                            t.source = new.source;
+                            self.play_track(t);
+                            self.yt_fallback = true; // one move per play
+                        }
+                        None if generation == self.play_gen => self.toast("This station is offline right now"),
+                        None => {}
+                    }
+                }
                 Msg::RadioNow(generation, now) => {
                     self.busy.remove("icy");
                     // keep the last known song when one poll comes back empty
@@ -679,7 +716,7 @@ impl App {
         if let Ok(e) = &mut self.engine {
             if let Some(err) = e.take_error() {
                 e.stop();
-                if !self.youtube_fallback() {
+                if !self.youtube_fallback() && !self.station_fallback() {
                     self.toast(format!("Can't play: {err}"));
                 }
             } else if e.ended() {

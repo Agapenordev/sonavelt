@@ -34,7 +34,7 @@ const THUMB: u32 = 256;
 const HI: u32 = 640;
 const MAX_TEXTURES: usize = 160;
 /// Bump to invalidate every cached image (older versions cached wrong fallback logos).
-const ART_DIR: &str = "art-v4";
+const ART_DIR: &str = "art-v5";
 
 pub struct ArtCache {
     map: HashMap<String, Slot>,
@@ -48,7 +48,7 @@ impl ArtCache {
         let (jobs, job_rx) = channel::<Job>();
         let (done_tx, done) = channel::<Done>();
         let job_rx = Arc::new(Mutex::new(job_rx));
-        for old in ["art", "art-v2", "art-v3"] {
+        for old in ["art", "art-v2", "art-v3", "art-v4"] {
             let _ = std::fs::remove_dir_all(dirs::cache_dir().unwrap_or_default().join("sonavelt").join(old));
         }
         // network-bound, so more workers than cores: one slow logo server can't stall the grid
@@ -169,29 +169,7 @@ fn fetch(t: &Track, size: u32) -> Option<(Vec<u8>, bool)> {
             get(&format!("https://i.ytimg.com/vi/{id}/maxresdefault.jpg")).or_else(|| get(&format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg"))).map(real)
         }
         Source::YouTube(id) => get(&format!("https://i.ytimg.com/vi/{id}/mqdefault.jpg")).map(real),
-        // stations' own logos are often dead links; fall back to the site's icon
-        Source::Radio(stream) => t.art.as_deref().and_then(get).map(real).or_else(|| {
-            let page = t.art.as_deref().unwrap_or(stream);
-            let host = page.split("://").nth(1)?.split(['/', ':', '?']).next()?;
-            // a shared image host's icon (Google, Wikimedia, a CDN) isn't the station's
-            const SHARED: &[&str] = &[
-                "google.",
-                "gstatic.",
-                "wikimedia.",
-                "wikipedia.",
-                "tunein.",
-                "brightspotcdn.",
-                "cloudfront.",
-                "akamai",
-                "imgur.",
-                "githubusercontent.",
-                "duckduckgo.",
-                "bing.",
-            ];
-            let icon = (!SHARED.iter().any(|s| host.contains(s))).then(|| get(&format!("https://www.google.com/s2/favicons?domain={host}&sz=128")))??;
-            // a station with no logo of its own keeps the icon for good; a logo that failed retries
-            Some((icon, t.art.is_none() || t.art.as_deref().is_some_and(|a| a.contains("google.com/s2/favicons"))))
-        }),
+        Source::Radio(stream) => station_logo(t, stream),
         Source::Local(p) => {
             let out = Command::new("ffmpeg")
                 .args(["-v", "error", "-i"])
@@ -202,6 +180,138 @@ fn fetch(t: &Track, size: u32) -> Option<(Vec<u8>, bool)> {
             (!out.stdout.is_empty()).then_some((out.stdout, true))
         }
     }
+}
+
+const GOOGLE_ICONS: &str = "https://www.google.com/s2/favicons?domain=";
+
+/// Bytes of a URL and whether they are an image (otherwise: a web page, or an error page).
+fn fetch_raw(url: &str) -> Option<(Vec<u8>, bool)> {
+    // some logo servers are slow but fine; give them time before falling back
+    let resp = ureq::get(url).set("User-Agent", "Mozilla/5.0 sonavelt/0.1").timeout(std::time::Duration::from_secs(10)).call().ok()?;
+    let mut v = Vec::new();
+    std::io::Read::read_to_end(&mut std::io::Read::take(resp.into_reader(), 8 << 20), &mut v).ok()?;
+    let image = image::guess_format(&v).is_ok();
+    Some((v, image))
+}
+
+/// Big enough to show as a cover rather than a small icon on a tile.
+fn big(bytes: &[u8]) -> bool {
+    image::load_from_memory(bytes).is_ok_and(|i| i.width().min(i.height()) >= 96)
+}
+
+/// A station's logo, best first: the listed logo, then one found on the station's website,
+/// then any small real icon, and only then Google's favicon for the site (not cached).
+fn station_logo(t: &Track, stream: &str) -> Option<(Vec<u8>, bool)> {
+    let mut small: Option<Vec<u8>> = None;
+    let mut keep = |bytes: Vec<u8>| -> Option<(Vec<u8>, bool)> {
+        if big(&bytes) {
+            return Some((bytes, true));
+        }
+        small.get_or_insert(bytes);
+        None
+    };
+    let candidates: Vec<String> = t
+        .art
+        .as_deref()
+        .unwrap_or("")
+        .split_whitespace()
+        // older saves point at Google's icon: look on the station's own site instead
+        .map(|c| c.strip_prefix(GOOGLE_ICONS).map_or(c.to_string(), |rest| format!("https://{}/", rest.split('&').next().unwrap_or(rest))))
+        .collect();
+    for c in &candidates {
+        let Some((bytes, image)) = fetch_raw(c) else { continue };
+        if image {
+            if let Some(found) = keep(bytes) {
+                return Some(found);
+            }
+            continue;
+        }
+        for icon in page_icons(&String::from_utf8_lossy(&bytes), c) {
+            if let Some((bytes, true)) = fetch_raw(&icon)
+                && let Some(found) = keep(bytes)
+            {
+                return Some(found);
+            }
+        }
+    }
+    if let Some(bytes) = small {
+        return Some((bytes, true)); // the station's own, just small: drawn centered on a tile
+    }
+    let page = candidates.last().map_or(stream, |c| c.as_str());
+    let host = page.split("://").nth(1)?.split(['/', ':', '?']).next()?;
+    // a shared image host's icon (Google, Wikimedia, a CDN) isn't the station's
+    const SHARED: &[&str] = &[
+        "google.",
+        "gstatic.",
+        "wikimedia.",
+        "wikipedia.",
+        "tunein.",
+        "brightspotcdn.",
+        "cloudfront.",
+        "akamai",
+        "imgur.",
+        "githubusercontent.",
+        "duckduckgo.",
+        "bing.",
+    ];
+    if SHARED.iter().any(|s| host.contains(s)) {
+        return None;
+    }
+    fetch_raw(&format!("{GOOGLE_ICONS}{host}&sz=128")).filter(|(_, image)| *image).map(|(b, _)| (b, false))
+}
+
+/// Logo URLs a web page offers, best first: apple-touch-icons (largest first), icons of 96 px
+/// and up, the share image, and the conventional /apple-touch-icon.png.
+fn page_icons(html: &str, base: &str) -> Vec<String> {
+    let lower = html.to_ascii_lowercase(); // same byte offsets as `html`
+    let origin = base.split('/').take(3).collect::<Vec<_>>().join("/");
+    let resolve = |href: &str| -> String {
+        let href = href.trim();
+        if href.starts_with("http") {
+            href.to_string()
+        } else if let Some(rest) = href.strip_prefix("//") {
+            format!("https://{rest}")
+        } else {
+            format!("{origin}/{}", href.trim_start_matches("./").trim_start_matches('/'))
+        }
+    };
+    let mut found: Vec<(u32, String)> = vec![];
+    let mut at = 0;
+    while let Some(i) = lower[at..].find('<').map(|i| at + i) {
+        let end = lower[i..].find('>').map_or(lower.len(), |e| i + e);
+        let (tag, low) = (&html[i..end], &lower[i..end]);
+        at = end.max(i + 1);
+        let attr = |name: &str| -> Option<String> {
+            let start = low.find(&format!(" {name}="))? + name.len() + 2;
+            let rest = &tag[start..];
+            match rest.chars().next()? {
+                q @ ('"' | '\'') => Some(rest[1..].split(q).next()?.to_string()),
+                _ => rest.split_whitespace().next().map(str::to_string),
+            }
+        };
+        let size = || attr("sizes").and_then(|s| s.split(['x', 'X']).next()?.parse::<u32>().ok()).unwrap_or(0);
+        if low.starts_with("<link") {
+            let (rel, Some(href)) = (attr("rel").unwrap_or_default().to_lowercase(), attr("href")) else { continue };
+            if href.ends_with(".svg") {
+                continue; // can't decode vector logos
+            }
+            if rel.contains("apple-touch-icon") {
+                found.push((10_000 + size().max(180), resolve(&href)));
+            } else if rel.contains("icon") && size() >= 96 {
+                found.push((5_000 + size(), resolve(&href)));
+            }
+        } else if low.starts_with("<meta")
+            && attr("property").or_else(|| attr("name")).is_some_and(|p| p.eq_ignore_ascii_case("og:image"))
+            && let Some(content) = attr("content")
+        {
+            found.push((1_000, resolve(&content)));
+        }
+    }
+    found.sort_by_key(|(rank, _)| std::cmp::Reverse(*rank));
+    let mut urls: Vec<String> = found.into_iter().map(|(_, u)| u).collect();
+    urls.push(format!("{origin}/apple-touch-icon.png"));
+    urls.dedup();
+    urls
 }
 
 /// YouTube's hqdefault pads 16:9 frames with black bars; cut them off.
@@ -242,6 +352,26 @@ pub fn cover_uv(aspect: f32, target: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_the_best_logo_on_a_station_page() {
+        let html = r#"<html><head>
+            <link rel="icon" href="/favicon.ico">
+            <link rel="icon" type="image/png" sizes="192x192" href="/img/icon-192.png">
+            <meta property="og:image" content="https://cdn.example.com/share.jpg">
+            <LINK REL="apple-touch-icon" sizes="180x180" HREF="//static.example.com/apple.png">
+            <link rel="icon" href="/logo.svg">
+        </head></html>"#;
+        assert_eq!(
+            page_icons(html, "https://radio.example.com/listen"),
+            [
+                "https://static.example.com/apple.png",
+                "https://radio.example.com/img/icon-192.png",
+                "https://cdn.example.com/share.jpg",
+                "https://radio.example.com/apple-touch-icon.png",
+            ]
+        );
+    }
 
     #[test]
     fn cover_uv_crops_wide_image_to_square() {
