@@ -1,6 +1,6 @@
 [package]
 name = "sonavelt"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 rust-version = "1.88"
 description = "A fast, native music player for Linux and Windows: YouTube, internet radio and your own files, with synced lyrics"
