@@ -206,16 +206,27 @@ impl Drop for StreamReader {
     }
 }
 
-/// A video's direct audio address, looked up ahead of a click: ffmpeg starts from it in about
-/// half a second, where `youtube_stream` spends two on the lookup first. Expires after a few hours.
-pub fn youtube_url(id: &str) -> Option<String> {
-    let out = tool("yt-dlp")
-        .args(["-f", BEST_AUDIO, "--no-warnings", "--no-playlist", "--extractor-args", FAST_CLIENT, "-g"])
-        .arg(format!("https://www.youtube.com/watch?v={id}"))
+/// Direct audio addresses of videos, looked up ahead of a click: ffmpeg starts from one in about
+/// half a second, where `youtube_stream` spends two on the lookup first. One yt-dlp run handles
+/// them all, so its start-up (slow on Windows) is paid once. Addresses expire after a few hours.
+pub fn youtube_urls(ids: &[String]) -> Vec<(String, String)> {
+    let Ok(out) = tool("yt-dlp")
+        .args(["-f", BEST_AUDIO, "--no-warnings", "--no-playlist", "--ignore-errors", "--extractor-args", FAST_CLIENT, "--print", "%(id)s %(url)s"])
+        .args(ids.iter().map(|id| format!("https://www.youtube.com/watch?v={id}")))
         .output()
-        .ok()?;
-    let url = String::from_utf8_lossy(&out.stdout).lines().next()?.trim().to_string();
-    url.starts_with("https://").then_some(url)
+    else {
+        return vec![];
+    };
+    parse_urls(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// yt-dlp's "<id> <url>" lines; anything else (a failed video prints nothing or "NA") is skipped.
+fn parse_urls(out: &str) -> Vec<(String, String)> {
+    out.lines()
+        .filter_map(|l| l.trim().split_once(' '))
+        .filter(|(_, url)| url.starts_with("https://"))
+        .map(|(id, url)| (id.to_string(), url.to_string()))
+        .collect()
 }
 
 /// Download a video's audio into the cache (used to prefetch the next song) and return the path.
@@ -505,6 +516,18 @@ mod tests {
             art: None,
         };
         assert_eq!(clean_title(&t), ("Daft Punk".into(), "One More Time".into()));
+    }
+
+    #[test]
+    fn looked_up_addresses() {
+        let out = "abc https://rr1.googlevideo.com/videoplayback?x=1\nbad NA\n\nxyz https://rr2.googlevideo.com/v\n";
+        assert_eq!(
+            parse_urls(out),
+            [
+                ("abc".to_string(), "https://rr1.googlevideo.com/videoplayback?x=1".to_string()),
+                ("xyz".to_string(), "https://rr2.googlevideo.com/v".to_string())
+            ]
+        );
     }
 
     #[test]

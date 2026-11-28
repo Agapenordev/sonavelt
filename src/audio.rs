@@ -318,7 +318,7 @@ mod stream_tests {
     #[test]
     #[ignore]
     fn youtube_stream_from_a_looked_up_address_starts_at_once() {
-        let url = crate::sources::youtube_url("kJQP7kiw5Fk").expect("no address");
+        let (_, url) = crate::sources::youtube_urls(&["kJQP7kiw5Fk".into()]).pop().expect("no address");
         let mut e = super::Engine::new().unwrap();
         e.set_volume(0.0);
         let t0 = std::time::Instant::now();

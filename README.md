@@ -109,7 +109,7 @@ Sonavelt updates itself: when a new version is out, update from Settings in one 
   [radio-browser.info](https://www.radio-browser.info). Shows the song on air. Dead streams are
   hidden.
 - **Your files:** MP3, FLAC, OGG, Opus, M4A and WAV, with their tags and cover art.
-- Favorites, playlists, queue, history, Smart Shuffle, M3U export, YouTube playlist import.
+- Favorites, playlists, queue, history, shuffle, M3U export, YouTube playlist import.
 - Even out loudness, equalizer presets, lyrics timing nudge.
 - Aura, blurred cover or solid background, color moods, interface size, sleep timer.
 - System tray and close to tray. On Linux, also media keys and lock screen controls (MPRIS).

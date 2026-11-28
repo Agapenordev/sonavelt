@@ -34,7 +34,7 @@ run them when you touch `audio.rs`, `sources.rs` or `updater.rs`.
 | `src/audio.rs` | `Engine`: ffmpeg reader thread, buffer, cpal callback, position, levels |
 | `src/sources.rs` | Local scan and tags, YouTube search/stream/download, radio directory and on-air song, lyrics |
 | `src/recommend.rs` | Home page picks: seed scoring, YouTube Mix fetch, ranking, cache (`~/.cache/sonavelt/home.json`) |
-| `src/library.rs` | `Track`, `Library` (saved to `~/.config/sonavelt/library.json`), `Settings`, Smart Shuffle |
+| `src/library.rs` | `Track`, `Library` (saved to `~/.config/sonavelt/library.json`), `Settings` |
 | `src/art.rs` | Artwork workers, disk cache, textures, 4×4 color grid, eviction |
 | `src/viz.rs` | Aura and blurred-cover backgrounds, palettes, the playing equalizer, fallback covers |
 | `src/theme.rs` | Colors and font families. All UI colors come from here |

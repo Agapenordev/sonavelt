@@ -1,6 +1,5 @@
-//! Tracks, persisted user library (favorites, playlists, play counts) and smart shuffle.
+//! Tracks and the persisted user library (favorites, playlists, play counts).
 
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -305,35 +304,6 @@ impl Library {
         *self.plays.entry(t.key()).or_default() += 1;
         self.save();
     }
-
-    /// Shuffle weighted toward favorites and often-played songs, away from just-played ones,
-    /// and never the same artist twice in a row when it can be avoided.
-    pub fn smart_shuffle(&self, tracks: &mut Vec<Track>) {
-        let mut rng = rand::rng();
-        let mut keyed: Vec<(f64, Track)> = tracks
-            .drain(..)
-            .map(|t| {
-                let mut w = 1.0 + (1.0 + *self.plays.get(&t.key()).unwrap_or(&0) as f64).ln();
-                if self.is_fav(&t) {
-                    w += 2.0;
-                }
-                if self.recent.iter().take(10).any(|r| r.source == t.source) {
-                    w *= 0.25;
-                }
-                // Efraimidis–Spirakis weighted random order
-                (-rng.random::<f64>().max(1e-12).ln() / w, t)
-            })
-            .collect();
-        keyed.sort_by(|a, b| a.0.total_cmp(&b.0));
-        *tracks = keyed.into_iter().map(|(_, t)| t).collect();
-        for i in 1..tracks.len() {
-            if tracks[i].artist == tracks[i - 1].artist
-                && let Some(j) = (i + 1..tracks.len()).find(|&j| tracks[j].artist != tracks[i - 1].artist)
-            {
-                tracks.swap(i, j);
-            }
-        }
-    }
 }
 
 /// Is `t` by the artist with key `a`? Checks the channel and the "Artist - Song" title, since
@@ -380,10 +350,6 @@ pub fn to_m3u(tracks: &[Track]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn t(artist: &str, n: u32) -> Track {
-        Track { title: format!("{artist}{n}"), artist: artist.into(), source: Source::YouTube(format!("{artist}{n}")), duration: None, art: None }
-    }
 
     #[test]
     fn m3u_export() {
@@ -437,14 +403,5 @@ mod tests {
     fn fancy_letters_become_ascii() {
         assert_eq!(plain_text("𝘴𝘭𝘰𝘸𝘦𝘥 + 𝐁𝐎𝐋𝐃 𝟐"), "slowed + BOLD 2");
         assert_eq!(plain_text("ʏ ᴀ ᴇ ꜱ ꜱ ɪ ꜰ ʏ · Ｌｏｆｉ x"), "Y A E S S I F Y · Lofi x");
-    }
-
-    #[test]
-    fn smart_shuffle_keeps_all_and_spreads_artists() {
-        let lib = Library::default();
-        let mut v: Vec<Track> = (0..3).map(|n| t("a", n)).chain((0..3).map(|n| t("b", n))).collect();
-        lib.smart_shuffle(&mut v);
-        assert_eq!(v.len(), 6);
-        assert!(v.windows(2).all(|w| w[0].artist != w[1].artist), "{v:?}");
     }
 }

@@ -65,6 +65,12 @@ one matters to you, open an issue or add a thumbs-up to an existing one. Want to
 - **YouTube songs start in about half a second** when the pointer rested on them first.
 - **Home finds new picks** each time you open it, and lyrics find the right song more often.
 
+## Coming next
+
+- **Shuffle plays only your list.** Smart Shuffle and the recommendations it mixed in are gone.
+- **Songs start right away more often.** The top Home picks, the top search results, the next songs
+  in the queue and the song waiting at launch are looked up in the background, ready to play.
+
 ## Next
 
 - **Packages.** AUR, Flatpak, and a `.deb`/`.rpm`.

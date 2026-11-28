@@ -16,6 +16,7 @@ use art::ArtCache;
 use eframe::egui::{self, Align, Color32, CornerRadius, FontFamily, FontId, Key, Margin, Rect, RichText, Sense, Stroke, Ui, Vec2, pos2, vec2};
 use egui_phosphor::regular as icon;
 use library::{Background, Eq, Library, Palette, Source, Track};
+use rand::seq::SliceRandom;
 use sources::Lyrics;
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
@@ -81,9 +82,9 @@ enum Msg {
     YouTube(Result<Vec<Track>, String>),
     Radio(Result<Vec<Track>, String>),
     Resolved(u64, Result<String, String>),
-    Warmed(String, Option<String>),
+    /// Videos whose addresses were looked up, and the addresses found.
+    Warmed(Vec<String>, Vec<(String, String)>),
     Lyrics(String, Result<Lyrics, String>),
-    Recs(Vec<Track>),
     RadioNow(u64, Option<String>),
     StationMoved(u64, String, Option<Track>),
     Imported(Option<String>, Vec<Track>),
@@ -175,9 +176,9 @@ struct App {
     current: Option<Track>,
     play_gen: u64,
     buffering: bool,
-    smart: bool,
+    /// Shuffle: play the list in random order. Only the list itself, nothing mixed in.
+    shuffle: bool,
     repeat: Repeat,
-    recs: HashSet<String>,
     lyrics: HashMap<String, Result<Lyrics, String>>,
     lyric_line: Option<usize>,
     sleep_at: Option<Instant>,
@@ -278,9 +279,8 @@ impl App {
             current: None,
             play_gen: 0,
             buffering: false,
-            smart: false,
+            shuffle: false,
             repeat: Repeat::Off,
-            recs: HashSet::new(),
             lyrics: HashMap::new(),
             lyric_line: None,
             sleep_at: None,
@@ -295,12 +295,14 @@ impl App {
         if app.home.stale() {
             app.refresh_home();
         }
-        // resume where you left off: last song loaded, paused
+        // resume where you left off: last song loaded, paused, and ready to start at once
         if let Some(t) = app.lib.recent.first().cloned() {
             app.queue = vec![t.clone()];
-            app.current = Some(t);
+            app.current = Some(t.clone());
             app.fetch_lyrics();
+            app.warm_up(&[t]);
         }
+        app.warm_home();
         app
     }
 
@@ -347,14 +349,12 @@ impl App {
 
     /// Play a whole list (library, favorites, playlist) starting at `i`.
     fn play_list(&mut self, mut list: Vec<Track>, i: usize) {
-        self.recs.clear();
-        if self.smart && !list[i].is_radio() {
+        if self.shuffle && !list[i].is_radio() {
             let first = list.remove(i);
-            self.lib.smart_shuffle(&mut list);
+            list.shuffle(&mut rand::rng());
             list.insert(0, first);
             self.queue = list;
             self.qpos = 0;
-            self.fetch_recs();
         } else {
             self.queue = list;
             self.qpos = i;
@@ -366,7 +366,7 @@ impl App {
         if list.is_empty() {
             return;
         }
-        self.lib.smart_shuffle(&mut list);
+        list.shuffle(&mut rand::rng());
         self.queue = list;
         self.qpos = 0;
         self.start();
@@ -382,19 +382,6 @@ impl App {
             self.queue.insert(self.qpos, t);
         }
         self.start();
-    }
-
-    /// Smart shuffle extra: sprinkle in YouTube songs related to the queue's artists.
-    fn fetch_recs(&mut self) {
-        let artists: Vec<String> = self.queue.iter().filter(|t| !t.is_radio()).map(|t| t.artist.clone()).take(20).collect();
-        if artists.is_empty() {
-            return;
-        }
-        let pick = artists[rand::random_range(0..artists.len())].clone();
-        self.spawn("recs", move || {
-            let found = sources::youtube_search(&format!("songs similar to {pick}"), 12).unwrap_or_default();
-            Msg::Recs(found.into_iter().filter(|t| t.duration.is_some_and(|d| (90.0..480.0).contains(&d))).take(5).collect())
-        });
     }
 
     fn start(&mut self) {
@@ -445,19 +432,40 @@ impl App {
         self.current = Some(t);
         self.fetch_lyrics();
         self.prefetch_next();
+        let upcoming: Vec<Track> = self.queue.iter().skip(self.qpos + 2).take(3).cloned().collect();
+        self.warm_up(&upcoming);
     }
 
-    /// Look up a YouTube song's audio address while the pointer rests on it.
-    fn warm_up(&mut self, id: String) {
-        if self.warm.contains_key(&id) || self.warming.len() >= 3 || sources::youtube_cached(&id).is_some() || !self.warming.insert(id.clone()) {
+    /// Look up the audio addresses of YouTube songs you're likely to play next (the top picks, the
+    /// top search results, the next in the queue, the one under the pointer), so they start at once.
+    fn warm_up<'a>(&mut self, tracks: impl IntoIterator<Item = &'a Track>) {
+        let fresh = |w: &HashMap<String, (String, Instant)>, id: &String| w.get(id).is_some_and(|(_, at)| at.elapsed().as_secs() < 3600);
+        let ids: Vec<String> = tracks
+            .into_iter()
+            .filter_map(|t| match &t.source {
+                Source::YouTube(id) => Some(id.clone()),
+                _ => None,
+            })
+            .filter(|id| !fresh(&self.warm, id) && !self.warming.contains(id) && sources::youtube_cached(id).is_none())
+            .take(6)
+            .collect();
+        // a few lookups at a time is plenty, and keeps YouTube from seeing a flood
+        if ids.is_empty() || self.warming.len() >= 12 {
             return;
         }
+        self.warming.extend(ids.iter().cloned());
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
         std::thread::spawn(move || {
-            let url = sources::youtube_url(&id);
-            let _ = tx.send(Msg::Warmed(id, url));
+            let found = sources::youtube_urls(&ids);
+            let _ = tx.send(Msg::Warmed(ids, found));
             ctx.request_repaint();
         });
+    }
+
+    /// The picks at the top of Home, the likeliest to be clicked.
+    fn warm_home(&mut self) {
+        let top: Vec<Track> = self.home.shelves.first().map(|s| s.tracks.iter().take(6).cloned().collect()).unwrap_or_default();
+        self.warm_up(&top);
     }
 
     /// Download the next YouTube song in the background so it starts instantly.
@@ -634,7 +642,7 @@ impl App {
     fn tick(&mut self, ctx: &egui::Context) {
         self.art.poll(ctx);
         if let Some(id) = ctx.data_mut(|d| d.remove_temp::<String>(egui::Id::new(WARM))) {
-            self.warm_up(id);
+            self.warm_up(&[Track { title: String::new(), artist: String::new(), source: Source::YouTube(id), duration: None, art: None }]);
         }
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
@@ -645,7 +653,11 @@ impl App {
                 Msg::YouTube(r) => {
                     self.busy.remove("yt");
                     match r {
-                        Ok(v) => self.yt = v,
+                        Ok(v) => {
+                            self.yt = v;
+                            let top: Vec<Track> = self.yt.iter().take(6).cloned().collect();
+                            self.warm_up(&top);
+                        }
                         Err(e) => self.toast(e),
                     }
                 }
@@ -656,9 +668,11 @@ impl App {
                         Err(e) => self.toast(format!("Radio directory unreachable: {e}")),
                     }
                 }
-                Msg::Warmed(id, url) => {
-                    self.warming.remove(&id);
-                    if let Some(url) = url {
+                Msg::Warmed(asked, found) => {
+                    for id in &asked {
+                        self.warming.remove(id);
+                    }
+                    for (id, url) in found {
                         self.warm.insert(id, (url, Instant::now()));
                     }
                 }
@@ -711,6 +725,7 @@ impl App {
                     self.busy.remove("home");
                     home.save();
                     self.home = home;
+                    self.warm_home();
                 }
                 Msg::HeardFound(song, found, fav) => {
                     self.busy.remove("heard");
@@ -766,18 +781,6 @@ impl App {
                             self.lib.radio_songs.truncate(200);
                         }
                         self.radio_now = now;
-                    }
-                }
-                Msg::Recs(v) => {
-                    self.busy.remove("recs");
-                    let mut at = self.qpos + 2;
-                    for t in v {
-                        if self.queue.iter().any(|q| q.source == t.source) {
-                            continue;
-                        }
-                        self.recs.insert(t.key());
-                        self.queue.insert(at.min(self.queue.len()), t);
-                        at += 3;
                     }
                 }
             }
@@ -1017,17 +1020,10 @@ impl App {
                     ui.spacing_mut().item_spacing.x = 12.0;
                     let w = 4.0 * 32.0 + 44.0 + 4.0 * 12.0;
                     ui.add_space((ui.available_width() - w) / 2.0);
-                    if icon_btn(ui, icon::SHUFFLE, self.smart.then_some(accent), 32.0)
-                        .on_hover_text("Smart Shuffle: leans on your favorites and mixes in recommendations")
-                        .clicked()
-                    {
-                        self.smart = !self.smart;
-                        if self.smart && !self.queue.is_empty() {
-                            let mut rest = self.queue.split_off(self.qpos + 1);
-                            self.lib.smart_shuffle(&mut rest);
-                            self.queue.extend(rest);
-                            self.fetch_recs();
-                            self.toast("Smart Shuffle on");
+                    if icon_btn(ui, icon::SHUFFLE, self.shuffle.then_some(accent), 32.0).on_hover_text("Shuffle").clicked() {
+                        self.shuffle = !self.shuffle;
+                        if self.shuffle && self.qpos + 1 < self.queue.len() {
+                            self.queue[self.qpos + 1..].shuffle(&mut rand::rng());
                         }
                     }
                     if icon_btn(ui, icon::SKIP_BACK, None, 32.0).on_hover_text("Previous  P").clicked() {
@@ -1247,7 +1243,6 @@ impl App {
             lib: &self.lib,
             current: self.current.as_ref(),
             playing_idx,
-            recs: &self.recs,
             names: &names,
             removable,
             suggested: false,
@@ -1456,15 +1451,11 @@ impl App {
             }
             View::Heard => self.heard_page(ui),
             View::Queue => {
-                let meta = if self.smart { format!("{} tracks · smart shuffle on", self.queue.len()) } else { format!("{} tracks", self.queue.len()) };
+                let meta = if self.shuffle { format!("{} tracks · shuffle on", self.queue.len()) } else { format!("{} tracks", self.queue.len()) };
                 self.header(ui, "Queue", &meta);
                 ui.horizontal(|ui| {
                     if ui.button("Clear upcoming").clicked() {
                         self.queue.truncate(self.qpos + 1);
-                    }
-                    if self.busy.contains("recs") {
-                        ui.spinner();
-                        ui.label(RichText::new("Finding songs you might like").color(TEXT2));
                     }
                 });
                 ui.add_space(20.0);
@@ -1563,7 +1554,6 @@ struct RowCtx<'a> {
     lib: &'a Library,
     current: Option<&'a Track>,
     playing_idx: Option<usize>,
-    recs: &'a HashSet<String>,
     names: &'a [String],
     removable: bool,
     /// Recommendations: the menu offers "Not interested" and "Don't recommend".
@@ -1672,7 +1662,7 @@ fn track_list(ui: &mut Ui, list: &[Track], idx: &[usize], c: &RowCtx, cache: &mu
             let text_w = r.width() - 240.0;
             let title_col = if is_cur { c.accent } else { TEXT };
             text(p, thumb.right_top() + vec2(14.0, 1.0), &t.title, 15.0, title_col, text_w, semibold());
-            let sub = if c.recs.contains(&t.key()) { format!("For you · {}", t.artist) } else { t.artist.clone() };
+            let sub = t.artist.clone();
             text(p, thumb.right_top() + vec2(14.0, 21.0), &sub, 13.0, TEXT2, text_w, FontFamily::Proportional);
             if let Some(d) = t.duration {
                 p.text(pos2(r.right() - 88.0, r.center().y), egui::Align2::RIGHT_CENTER, fmt_time(d), FontId::monospace(12.0), MUTED);
@@ -2202,7 +2192,6 @@ impl App {
             lib: &self.lib,
             current: self.current.as_ref(),
             playing_idx: None,
-            recs: &self.recs,
             names: &names,
             removable: false,
             suggested: true,
