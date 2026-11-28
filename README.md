@@ -9,7 +9,8 @@ Free, no account, no ads. For Linux and Windows.
 
 [**Download**](https://github.com/Agapenordev/sonavelt/releases/latest) ·
 [Install](#install) ·
-[Roadmap](ROADMAP.md)
+[Roadmap](ROADMAP.md) ·
+[Code signing policy](CODE_SIGNING.md)
 
 [![CI](https://github.com/Agapenordev/sonavelt/actions/workflows/ci.yml/badge.svg)](https://github.com/Agapenordev/sonavelt/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-f8ead6)](LICENSE)
@@ -63,6 +64,11 @@ winget install Gyan.FFmpeg yt-dlp.yt-dlp DenoLand.Deno
 
 Download `sonavelt-…-x86_64-windows.zip`, unzip it into a folder you own (for example
 `Documents\Sonavelt`) and run `sonavelt.exe`.
+
+The Windows build isn't code-signed yet, so Windows may stop it the first time. If you see
+*Windows protected your PC*, choose **More info**, then **Run anyway**. *Smart App Control* has no
+such button and blocks unsigned apps until it's turned off. Signing is being set up: see the
+[code signing policy](CODE_SIGNING.md).
 
 ### Linux
 

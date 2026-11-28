@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The artifact configuration set up for Sonavelt on SignPath; kept here so it is reviewed like
+     code. The Release workflow uploads sonavelt.exe (zipped by upload-artifact) and passes the
+     version, so only a Sonavelt build of that exact version can be signed. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="sonavelt.exe" product-name="Sonavelt" product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

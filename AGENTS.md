@@ -124,6 +124,10 @@ tests, builds on Ubuntu 22.04 (glibc 2.35, so the binary runs on older distros t
 - `sonavelt-X.Y.Z-x86_64-windows.zip`, `sonavelt-x86_64-windows.exe` and `SHA256SUMS-windows`, from a
   Windows job that runs after the Linux one and adds them to the same release
 
+Once SignPath is set up (see [CODE_SIGNING.md](CODE_SIGNING.md)), the Windows job waits for the
+signing request to be approved on SignPath before it packages the signed `.exe`; without the
+`SIGNPATH_*` repository settings it ships unsigned.
+
 Installed copies offer the update on their next launch. A push that doesn't change the version
 does nothing. To check a build without publishing, run the workflow by hand from the Actions tab
 with *dry run* on; the packaged files come back as a downloadable artifact.

@@ -93,6 +93,7 @@ jobs:
         run: |
           v=${{ steps.version.outputs.version }}
           gh release create "v$v" --target "$GITHUB_SHA" --title "Sonavelt $v" --generate-notes \
+            --notes "[Code signing policy](https://github.com/${{ github.repository }}/blob/main/CODE_SIGNING.md)" \
             dist/sonavelt-$v-x86_64-linux.tar.gz dist/sonavelt-x86_64-linux dist/SHA256SUMS
         env:
           GH_TOKEN: ${{ github.token }}
@@ -111,17 +112,48 @@ jobs:
         run: |
           cargo test
           cargo build --release
+          New-Item -ItemType Directory -Path unsigned | Out-Null
+          Copy-Item target/release/sonavelt.exe unsigned/
+
+      # Signing runs once SignPath is set up (see CODE_SIGNING.md): the repository variables
+      # SIGNPATH_ORGANIZATION_ID, SIGNPATH_PROJECT_SLUG, SIGNPATH_POLICY_SLUG and the secret
+      # SIGNPATH_API_TOKEN. Until then the release ships unsigned, as before.
+      - name: Upload for signing
+        id: unsigned
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonavelt-windows-unsigned
+          path: unsigned/sonavelt.exe
+
+      - name: Sign
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          parameters: |
+            version: "${{ needs.release.outputs.version }}"
+          wait-for-completion: true
+          # every release waits for a person to approve it on SignPath
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed
 
       - name: Package
         shell: pwsh
         run: |
           $v = "${{ needs.release.outputs.version }}"
+          $exe = if (Test-Path signed/sonavelt.exe) { "signed/sonavelt.exe" } else { "unsigned/sonavelt.exe" }
+          Write-Output "Packaging $exe"
           $dir = "sonavelt-$v-x86_64-windows"
           New-Item -ItemType Directory -Path "dist/$dir" | Out-Null
-          Copy-Item target/release/sonavelt.exe, README.md, LICENSE "dist/$dir/"
+          Copy-Item $exe, README.md, LICENSE, CODE_SIGNING.md "dist/$dir/"
           Compress-Archive -Path "dist/$dir" -DestinationPath "dist/$dir.zip"
           # the in-app updater downloads exactly this file name
-          Copy-Item target/release/sonavelt.exe dist/sonavelt-x86_64-windows.exe
+          Copy-Item $exe dist/sonavelt-x86_64-windows.exe
           Get-FileHash "dist/$dir.zip", dist/sonavelt-x86_64-windows.exe -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
             Set-Content dist/SHA256SUMS-windows

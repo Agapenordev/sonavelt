@@ -18,6 +18,8 @@ fn main() {
 fn embed(ico: &std::path::Path) {
     let mut res = winresource::WindowsResource::new();
     res.set_icon(ico.to_str().unwrap());
+    // code signing only accepts files named for this product (the version comes from Cargo.toml)
+    res.set("ProductName", "Sonavelt").set("FileDescription", "Sonavelt").set("OriginalFilename", "sonavelt.exe");
     res.compile().unwrap();
 }
 
